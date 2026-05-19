@@ -26,45 +26,41 @@
 
 ---
 
-## ขั้นตอน 2: ตรวจ Conversion Tracking (รากฐาน)
+## ขั้นตอน 2: ภาพรวม Client
 
 ```
-□ เรียก Tool: pixel_health_check หรือดูจาก Meta Events Manager
-□ ตรวจ:
-  - Pixel Fire ครบทุก Page ไหม?
-  - CAPI ทำงานอยู่ไหม?
-  - EMQ Score >= 7 ไหม?
-  - มี Deduplication (event_id) ไหม?
-  - Conversion Event ที่ Optimize ถูกต้องไหม?
+□ Tool: get_client_summary
+□ ได้อะไร: org_id ที่ถูกต้อง, Spend รวม 30d, CPA, Platform ที่ใช้
+□ สิ่งที่ต้องดู:
+  - Org มีกี่ Platform? (Meta, Google, LINE)
+  - Total Spend สมเหตุสมผลกับ Budget ไหม?
+  - CPA ห่างจาก Target แค่ไหน?
 
-□ ถ้าพบปัญหา → แจ้งก่อนดู Performance
-  "ข้อมูล Performance ที่เห็นอาจไม่แม่น เพราะ Tracking มีปัญหา"
+⚠️ ถ้า org ไม่มีชื่อ (แสดงแค่ UUID) → แจ้ง user ให้ตั้งชื่อ Org ใน ConversionFactor
 ```
 
 ---
 
-## ขั้นตอน 3: Audience Audit
+## ขั้นตอน 3: ตรวจ Conversion Tracking (รากฐาน)
 
 ```
-□ ดู Campaign Structure:
-  - มีกี่ Ad Sets?
-  - แต่ละ Ad Set ตั้ง Audience ขนาดเท่าไหร่?
-  - ใช้ Interest เยอะเกินไปไหม? (ควร 3–5 Interest ต่อ Ad Set)
-  - มี Narrow By ไหม? (ดู Knowledge 01: Audience Narrow By)
-  - มี Custom Audience สำหรับ Retargeting แยกต่างหากไหม?
+□ Tool: pixel_health_check
+□ ได้อะไร: Event volume, CAPI signal, event drop
 
-□ ตรวจ Audience Sizing Rule (5–15x):
-  - Reach ที่ต้องการ = X คน
-  - Audience ควรมีขนาด 5X–15X
-  - ถ้าแคบเกิน → CPM จะสูง, Fatigue เร็ว
-  - ถ้ากว้างเกิน → เสียงบกับคนที่ไม่ใช่ Target
+□ Tool: get_pixel_quality  [pending — ดูจาก Meta Events Manager แทน]
+□ ได้อะไร: EMQ Score ต่อ event type, Custom Audience size
 
-□ ตรวจ Narrow By Structure:
-  หลักการ: Audience = กลุ่ม A ∩ กลุ่ม B ∩ กลุ่ม C (AND logic)
-  ตัวอย่างสินค้า Luxury:
-    Layer 1 (OR): Luxury brands, Luxury lifestyle
-    AND Layer 2 (OR): High income, Wealth management, Private banking
-    AND Layer 3 (OR): Car enthusiast, Automotive interest
+□ สิ่งที่ต้องดู:
+  - Purchase event มีไหม? (ถ้าไม่มีแต่มี Spend → ปัญหาใหญ่)
+  - CAPI ส่ง signal ถึง Meta ไหม?
+  - EMQ >= 7 ไหม?
+  - มี event drop กะทันหันไหม?
+
+□ Action ตาม rule:
+  - ไม่มี Purchase event แต่มี Spend → ตรวจ Pixel/CAPI ก่อน
+  - EMQ < 7 → เพิ่ม phone/email parameter ใน CAPI payload
+  - ไม่มี CAPI signal → ตรวจ server-side implementation
+  - มี Lead แต่ไม่มี Purchase → ตรวจว่า sync Purchase จาก LINE กลับแล้วหรือยัง
 ```
 
 ---
@@ -72,103 +68,121 @@
 ## ขั้นตอน 4: Campaign Health Check
 
 ```
-□ เรียก Tool: campaign_health_check หรือดู Ads Manager
-□ ดูทีละ Level: Campaign → Ad Set → Ad
+□ Tool: campaign_health_check
+□ ได้อะไร: Spend, CPA, CTR, CPM, Frequency ทุก Campaign และ Ad
 
-Campaign Level:
-  - Objective ถูกต้องตาม Business Goal ไหม?
-  - Budget เพียงพอให้ออก Learning Phase ไหม? (Budget ≥ 7 × Target CPA/วัน)
-  - Advantage Campaign Budget เปิดอยู่ไหม?
+□ Tool: find_anomalies
+□ ได้อะไร: CPA spike, CTR drop, Spend spike เทียบ 7d avg
 
-Ad Set Level:
-  - Learning Phase Status: Active / Learning / Limited?
-  - CPA vs Target: ±% เท่าไหร่?
-  - Frequency: > 3.5 แล้วหรือยัง?
+□ สิ่งที่ต้องดู:
+  Campaign Level:
+  - CPA vs Target ±% เท่าไหร่?
+  - Budget ถูกใช้ครบไหม?
+  - มี Ad Set ที่ Spend แต่ไม่ Convert เลยไหม?
 
-Ad Level:
-  - Hook Rate, Hold Rate, oCTR แต่ละ Ad?
-  - Ad ไหนเป็น Winner? ไหนเป็น Loser?
+  Ad Level:
+  - Frequency > 3.5 → เตือน Ad Fatigue ทันที
+  - CPA spike > 30% → ตรวจ Creative Frequency และ Landing Page
+  - CTR drop > 30% → แนะนำ Refresh Creative หรือ Audience ใหม่
+  - Spend spike > 50% → ตรวจ Budget Cap และ Bid Strategy
 ```
 
 ---
 
-## ขั้นตอน 5: Creative Audit
+## ขั้นตอน 5: Audience Audit
 
 ```
-□ ดูแต่ละ Ad และประเมิน:
+□ Tool: get_adset_config  [pending — ดู Audience จาก Ads Manager แทน]
+□ ได้อะไร: Narrow-By Layers จริง, Custom Audience, Lookalike, Demographics, is_advantage_plus
 
-HOOK (0–3 วิ):
-  - มี Visual ดึงดูดทันทีไหม?
-  - Text แรกทำให้หยุดดูไหม?
-  - Format ถูก (9:16 หรือ 1:1)?
+□ Tool: suggest_audience_plan
+□ ใช้เพื่อ: สร้าง Best Practice Plan เพื่อเปรียบกับที่เซตจริง
 
-STORY (3–15 วิ):
-  - พูดถึง Pain Point ของ Audience ไหม?
-  - มี Social Proof ไหม?
-  - ภาษาตรงกับที่ Audience ใช้ไหม?
+□ สิ่งที่ต้องดู:
+  - มี Narrow-By กี่ Layer? (ควร 2–3)
+  - แต่ละ Layer มี items พอไหม? (ควร 3–8 items)
+  - Audience Type ถูกไหม?
+  - is_advantage_plus = true ไหม? (ต้องมี Conversion data >50/สัปดาห์)
 
-OFFER + CTA:
-  - CTA ชัดเจนและตรงกับ Objective ไหม?
-  - Offer น่าสนใจไหม?
-  - CTA ตรงกับ Button ไหม?
-
-□ ดู Creative Metrics:
-  - Hook Rate: < 25% = ปัญหา
-  - Hold Rate: < 30% = ปัญหา
-  - oCTR: < 1% = ปัญหา
-  - Frequency: > 3.5 = เร่งด่วน
+□ Action ตาม rule:
+  - Layer < 2 หรือไม่มี Narrow-By → แนะนำ restructure
+  - Audience ไม่ตรง Business type → เปรียบกับ suggest_audience_plan
+  - Frequency > 3.5 → Audience อาจ saturate → ขยาย
 ```
 
 ---
 
-## ขั้นตอน 6: Post-Click Analysis
+## ขั้นตอน 6: Creative Audit
 
 ```
-□ ถ้า Objective คือ Traffic/Conversion ไปยังเว็บ:
-  - ตรวจ Landing Page ด้วย Checklist ใน Knowledge 04
-  - ตรวจ GA4: Bounce Rate, CVR, Session Duration
-  - ตรวจ Page Speed: < 3 วินาที?
-  - ตรวจ Message Match: Ad Copy ตรงกับ Landing Page H1 ไหม?
+□ Tool: get_ad_config  [pending — ดู Creative จาก Ads Manager แทน]
+□ ได้อะไร: Headline, Body, CTA, Image/Video URL ทุก Ad
 
-□ ถ้า Objective คือ LINE / Messenger:
-  - ตรวจ Reply Rate ของ LINE OA
-  - ตรวจว่า fbclid ถูก Track ไหม (ConversionFactor)
-  - ตรวจ Conversion Rate จาก Chat → Purchase
+□ Tool: get_video_metrics  [pending — ดูจาก Ads Manager Custom Columns แทน]
+□ ได้อะไร: Hook Rate, Hold Rate, Avg Watch Time
+
+□ สิ่งที่ต้องดู:
+  - Hook Rate < 25% → เปลี่ยน Visual/Text แรก
+  - Hold Rate < 30% → ปรับ Story ให้ match กับ Hook
+  - Frequency > 3.5 + CTR ลด → Creative Fatigue → Refresh ด่วน
+  - oCTR ดีแต่ Conversion = 0 → Landing Page หรือ Pixel มีปัญหา
+
+□ ประเมิน HOOK–STORY–OFFER ตาม Knowledge 02
 ```
 
 ---
 
-## ขั้นตอน 7: Cross-Platform View
+## ขั้นตอน 7: Performance Breakdown
 
 ```
-□ เรียก Tool: compare_platforms
-□ ดู:
-  - Meta vs Google: Spend, CPA, ROAS, Conversions
-  - Platform ไหนให้ nROAS ดีที่สุด?
-  - Budget allocation ปัจจุบัน vs แนะนำ?
+□ Tool: get_performance_breakdown  [pending — ดูจาก Ads Manager Breakdown แทน]
+□ ได้อะไร: Spend/CPA/CTR แยกตาม Age, Gender, Placement, Device
+
+□ สิ่งที่ต้องดู:
+  Age/Gender:
+  - กลุ่มไหน CPA ดีที่สุด? → พิจารณา Narrow Demographics
+  - กลุ่มไหน Spend มากแต่ไม่ Convert? → ตัดออก
+
+  Placement:
+  - Feed vs Reels vs Stories → ไหน perform ดีสุด?
+  - ถ้า Reels แย่แต่ Spend เยอะ → Exclude Reels
+
+  Device:
+  - Mobile vs Desktop CVR ต่างกันมากไหม? → ตรวจ Mobile Landing Page
+```
+
+---
+
+## ขั้นตอน 8: Cross-Platform View
+
+```
+□ Tool: compare_platforms
+□ ได้อะไร: Meta vs Google vs LINE — Spend, CPA, ROAS
+
+□ Tool: conversion_funnel
+□ ได้อะไร: True ROAS รวม LINE Conversion
+
+□ สิ่งที่ต้องดู:
+  - Platform ไหน nROAS ดีที่สุด? → allocate budget มากกว่า
+  - True ROAS ต่างจาก Reported ROAS มากไหม? → ถ้าต่างมาก = LINE ไม่ถูก track
   - มี Attribution Overlap ระหว่าง Platform ไหม?
 ```
 
 ---
 
-## ขั้นตอน 8: สรุปและ Action Plan
-
-**Output ที่ต้องให้ลูกค้า:**
+## ขั้นตอน 9: สรุปและ Action Plan
 
 ```
 🔴 Critical Issues (ต้องแก้ทันที):
-  1. [ปัญหา] → [Action]
-  2. ...
+  1. [ปัญหา] → [Action ที่ทำได้จริง]
 
-🟡 Issues (แก้ใน 1–2 สัปดาห์):
+🟠 Issues (แก้ใน 1–2 สัปดาห์):
   1. [ปัญหา] → [Action]
-  2. ...
 
-🟢 Opportunities (ทำเพิ่มเพื่อ Scale):
+🟢 Opportunities (Scale):
   1. [โอกาส] → [Action]
-  2. ...
 
-Priority Actions (สัปดาห์นี้):
+Priority Actions สัปดาห์นี้:
   □ Action 1
   □ Action 2
   □ Action 3
@@ -178,14 +192,19 @@ Priority Actions (สัปดาห์นี้):
 
 ## Time Estimate
 
-| ขั้นตอน | เวลาประมาณ |
-|--------|---------|
-| Business Brief | 10–15 นาที |
-| Tracking Check | 5–10 นาที |
-| Audience Audit | 10–15 นาที |
-| Campaign Health | 15–20 นาที |
-| Creative Audit | 20–30 นาที |
-| Post-Click | 10–15 นาที |
-| Cross-Platform | 10 นาที |
-| สรุป + Report | 15–20 นาที |
-| **รวม** | **~90–120 นาที** |
+| ขั้นตอน | เวลา | Tools |
+|---|---|---|
+| Business Brief | 10 นาที | — |
+| ภาพรวม Client | 2 นาที | `get_client_summary` |
+| Tracking Check | 5 นาที | `pixel_health_check` |
+| Campaign Health | 10 นาที | `campaign_health_check`, `find_anomalies` |
+| Audience Audit | 10 นาที | `get_adset_config`, `suggest_audience_plan` |
+| Creative Audit | 10 นาที | `get_ad_config`, `get_video_metrics` |
+| Breakdown | 5 นาที | `get_performance_breakdown` |
+| Cross-Platform | 5 นาที | `compare_platforms`, `conversion_funnel` |
+| สรุป | 10 นาที | — |
+| **รวม** | **~67 นาที** | |
+
+---
+
+*ใช้ร่วมกับ: Knowledge 01–07 | อัพเดท: 2026-05*
