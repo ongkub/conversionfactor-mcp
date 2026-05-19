@@ -1,0 +1,12 @@
+{
+  "_comment": "วาง block นี้ใน claude_desktop_config.json ของคุณ ใต้ key 'mcpServers'",
+  "mcpServers": {
+    "conversionfactor": {
+      "type": "sse",
+      "url": "https://conversion.sparkth.io/mcp/sse",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_KEY_HERE"
+      }
+    }
+  }
+}
