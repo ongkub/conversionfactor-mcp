@@ -30,15 +30,19 @@
 {
   "mcpServers": {
     "conversionfactor": {
-      "type": "sse",
-      "url": "https://conversion.sparkth.io/mcp/sse",
-      "headers": {
-        "Authorization": "Bearer YOUR_MCP_KEY_HERE"
-      }
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://conversion.sparkth.io/mcp/sse",
+        "--header",
+        "Authorization: Bearer YOUR_MCP_KEY_HERE"
+      ]
     }
   }
 }
 ```
+
+> Claude Desktop ต้องใช้ `mcp-remote` เป็น proxy — ต้องมี Node.js ติดตั้งอยู่บนเครื่อง
 
 **Restart Claude Desktop** — จะเห็น 🔌 icon ที่ chat bar
 

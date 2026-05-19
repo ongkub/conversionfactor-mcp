@@ -1,12 +1,14 @@
 {
-  "_comment": "วาง block นี้ใน claude_desktop_config.json ของคุณ ใต้ key 'mcpServers'",
+  "_comment": "วาง block mcpServers นี้ใน claude_desktop_config.json ของคุณ แล้ว Restart Claude Desktop",
   "mcpServers": {
     "conversionfactor": {
-      "type": "sse",
-      "url": "https://conversion.sparkth.io/mcp/sse",
-      "headers": {
-        "Authorization": "Bearer YOUR_MCP_KEY_HERE"
-      }
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://conversion.sparkth.io/mcp/sse",
+        "--header",
+        "Authorization: Bearer YOUR_MCP_KEY_HERE"
+      ]
     }
   }
 }
