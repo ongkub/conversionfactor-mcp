@@ -3,6 +3,9 @@
 
 > ใช้ Workflow นี้เมื่อ: รับลูกค้าใหม่, แคมเปญมีปัญหาไม่รู้จะเริ่มจากไหน, หรือต้องการ review ครั้งใหญ่
 
+> ⚠️ Token Rule: ต้องดึง campaign_health_check ก่อนเสมอ → จด campaign_ids ที่ active → ใช้กรองทุก tool ถัดไป
+> ห้ามเรียก get_adset_config / get_ad_config โดยไม่มี campaign_id (org ใหญ่อาจมี 200+ adsets / 1,500+ ads)
+
 ---
 
 ## ขั้นตอน 1: Business Brief (ก่อนดู Data)

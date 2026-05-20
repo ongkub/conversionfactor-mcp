@@ -11,6 +11,12 @@
 ```
 □ เรียก Tool: get_client_summary เพื่อดูภาพรวมและยืนยัน org_id
 □ เตรียม Target KPI: CPA เป้า, ROAS เป้า, Budget/สัปดาห์
+
+⚠️ Token Efficiency — บังคับทำก่อน:
+□ เรียก campaign_health_check(days: 7) เพื่อรู้ว่า campaign_id ไหน active จริง
+□ จด campaign_ids ที่มี spend > 0 ในสัปดาห์นี้ → ใช้กรองทุก tool ถัดไป
+□ ห้ามเรียก get_adset_config / get_ad_config โดยไม่มี campaign_id
+   (Sangthai มี 269 adsets / 1,655 ads → token เกิน context limit ทันที)
 ```
 
 ---
@@ -66,7 +72,7 @@
   - Hold Rate < 30% → ปรับ Story
   - Frequency > 3.5 → เร่งด่วน เพิ่ม Creative ใหม่
 
-□ Tool: get_ad_config  [pending]
+□ Tool: get_ad_config(campaign_id: [จาก Section 2])  ← ต้องระบุ campaign_id เสมอ
 □ ดู Creative ที่รันอยู่:
   - Headline/Body ตรงกับ Audience Stage ไหม? (Cold/Warm/Hot)
   - CTA ตรงกับ Optimization Goal ไหม?
@@ -83,7 +89,7 @@
 ## Section 4: Audience Health (5 นาที)
 
 ```
-□ Tool: get_adset_config  [pending — ดูจาก Ads Manager แทน]
+□ Tool: get_adset_config(campaign_id: [จาก Section 2])  ← ต้องระบุ campaign_id เสมอ
 □ ตรวจ:
   - Narrow-By Layer ยังสมเหตุสมผลไหม?
   - Frequency สูงใน Ad Set ไหน? → Audience อาจ saturate

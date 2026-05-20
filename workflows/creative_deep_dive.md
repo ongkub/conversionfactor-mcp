@@ -3,6 +3,9 @@
 
 > ใช้เมื่อ: CTR ตก, CPA พุ่ง, Frequency สูง, หรือต้องการ audit creative ก่อน refresh
 
+> ⚠️ Token Rule: ระบุ campaign_id เสมอเมื่อเรียก get_ad_config และ get_video_metrics
+> ห้ามดึง ad config ทั้ง org (อาจมี 1,500+ ads) — เจาะเฉพาะ campaign ที่มีปัญหาเท่านั้น
+
 ---
 
 ## เมื่อไหรควรใช้ Workflow นี้

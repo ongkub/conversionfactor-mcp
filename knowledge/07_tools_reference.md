@@ -124,7 +124,72 @@ Tools เหล่านี้อยู่ใน roadmap แต่ยังไ�
 
 ---
 
-## 6. Output Format Standard
+## 6. Token-Efficient Query Guide
+
+> ⚠️ สำคัญมาก: อย่าดึง get_adset_config หรือ get_ad_config โดยไม่กรองก่อน
+> Sangthai มี 269 adsets และ 1,655 ads — ถ้าดึงทั้งหมดจะเกิน token limit ทันที
+
+### กฎ Token Efficiency
+
+**กฎที่ 1: ระบุ campaign_id ก่อนเสมอ เมื่อดู adset/ad**
+```
+✅ get_adset_config(campaign_id: "XXX")  → ดึงแค่ campaign เดียว
+❌ get_adset_config()                    → ดึง 269 adsets → token เกิน
+```
+
+**กฎที่ 2: ใช้ has_spend_days (เมื่อ implement แล้ว) กรอง campaign ที่ไม่ได้รัน**
+```
+✅ get_campaign_config(has_spend_days: 7)  → ได้แค่ campaigns ที่ใช้เงินจริง
+❌ get_campaign_config(status_filter: ACTIVE) → รวม expired campaigns ด้วย
+```
+
+**กฎที่ 3: ลำดับ query — กว้างก่อน แคบทีหลัง**
+```
+1. get_campaign_config → รู้ว่า campaign ไหน active จริง
+2. campaign_health_check → รู้ว่า campaign ไหน perform ดี/แย่
+3. get_adset_config(campaign_id) → เจาะเฉพาะ campaign ที่น่าสนใจ
+4. get_ad_config(campaign_id) → เจาะ creative เฉพาะ campaign นั้น
+```
+
+### Token-Efficient Chain (ใช้แทน Full Audit เมื่อ org ใหญ่)
+
+```
+Step 1: get_client_summary
+  → รู้ org_id, spend รวม, platform
+
+Step 2: get_campaign_config(status_filter: ACTIVE, has_spend_days: 7) [pending]
+  หรือ campaign_health_check(days: 7)
+  → identify campaign_ids ที่รันจริงในสัปดาห์นี้ (คาดว่า 3–5 จาก 269 adsets)
+
+Step 3: get_adset_config(campaign_id: [id จาก step 2])
+  → ดู audience เฉพาะ campaign ที่ active (~15–30 adsets แทน 269)
+
+Step 4: get_ad_config(campaign_id: [id จาก step 2])
+  → ดู creative เฉพาะ campaign ที่ active (~30–50 ads แทน 1,655)
+```
+
+### Token Estimate (Sangthai)
+
+| Query | Token ปัจจุบัน | Token หลัง filter | ประหยัด |
+|---|---|---|---|
+| get_adset_config (ทั้งหมด) | ~90,000 | ~5,000 | 94% |
+| get_ad_config (ทั้งหมด) | ~276,000 | ~15,000 | 95% |
+| get_campaign_config (ทั้งหมด) | ~5,000 | ~1,000 | 80% |
+
+### สถานะ Filter ที่มีอยู่แล้ว
+
+| Tool | campaign_id | has_spend_days | status_filter |
+|---|---|---|---|
+| get_campaign_config | ❌ | ❌ pending | ✅ |
+| get_adset_config | ✅ ใช้ได้เลย | ❌ pending | ✅ |
+| get_ad_config | ❌ pending | ❌ pending | ✅ |
+| get_video_metrics | ❌ | ❌ pending | — |
+
+> 📁 Feature Request เต็ม: `/feature-requests/token_efficient_filters.md`
+
+---
+
+## 7. Output Format Standard
 
 ทุกครั้งที่วิเคราะห์ข้อมูลจาก tools ให้จัดรูปแบบดังนี้:
 
@@ -143,4 +208,4 @@ Tools เหล่านี้อยู่ใน roadmap แต่ยังไ�
 
 ---
 
-*อัพเดทล่าสุด: 2026-05 | ใช้คู่กับ CONVERSIONFACTOR_PROMPT.md*
+*อัพเดทล่าสุด: 2026-05 (เพิ่ม Token-Efficient Query Guide) | ใช้คู่กับ CONVERSIONFACTOR_PROMPT.md*

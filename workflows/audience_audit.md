@@ -3,6 +3,9 @@
 
 > ใช้เมื่อ: CPM สูงขึ้นเรื่อยๆ, CPA แย่ลงแม้ Creative ดี, สงสัยว่า Audience ตั้งค่าถูกไหม
 
+> ⚠️ Token Rule: ระบุ campaign_id เสมอเมื่อเรียก get_adset_config
+> ขั้นตอน: campaign_health_check → จด campaign_id ที่ต้องการ audit → get_adset_config(campaign_id: X)
+
 ---
 
 ## เมื่อไหรควรใช้ Workflow นี้
@@ -37,7 +40,7 @@
 ## ขั้นตอน 2: ดู Audience ที่เซตจริง
 
 ```
-□ Tool: get_adset_config  [pending — ดูจาก Ads Manager แทน]
+□ Tool: get_adset_config(campaign_id: [ระบุจาก Step 1])  ← บังคับระบุ campaign_id
 □ ได้อะไร:
   - Narrow-By Layers (flexible_spec)
   - Custom Audience / Lookalike ที่ใช้
