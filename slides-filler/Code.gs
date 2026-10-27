@@ -20,11 +20,18 @@ function showFillDialog() {
 
 // Page elements that hold text, including the ones inside groups. Skips anything whose centre is off the slide
 // (last month's stale boxes are parked off-canvas).
-function collectTables_(elements, out) {
+function collectTables_(elements, pageW, pageH, out) {
   for (var i = 0; i < elements.length; i++) {
-    var type = elements[i].getPageElementType();
-    if (type === SlidesApp.PageElementType.GROUP) collectTables_(elements[i].asGroup().getChildren(), out);
-    else if (type === SlidesApp.PageElementType.TABLE) out.push(elements[i].asTable());
+    var el = elements[i];
+    var type = el.getPageElementType();
+    if (type === SlidesApp.PageElementType.GROUP) {
+      collectTables_(el.asGroup().getChildren(), pageW, pageH, out);
+    } else if (type === SlidesApp.PageElementType.TABLE) {
+      var left = el.getLeft();
+      var top = el.getTop();
+      var outside = isFinite(left) && isFinite(top) && (left >= pageW || left + el.getWidth() <= 0 || top >= pageH || top + el.getHeight() <= 0);
+      if (!outside) out.push(el.asTable());
+    }
   }
 }
 
@@ -55,7 +62,7 @@ function buildIndex_() {
     var shapes = [];
     collectShapes_(slide.getPageElements(), w, h, shapes);
     var tables = [];
-    collectTables_(slide.getPageElements(), tables);
+    collectTables_(slide.getPageElements(), w, h, tables);
     return { number: i + 1, shapes: shapes, tables: tables };
   });
 }
@@ -170,15 +177,40 @@ function setCellText_(table, row, col, newText) {
   }
 }
 
-// One "table" op: fills the numeric cells of every table on the slide whose header matches.
+// "Current 16/09/2026 - 15/10/2026" / "Previous …" cells in the header rows of a table we fill
+function applyHeaderDates_(table, op, tableIndex, props, force, counts, problems, slideNumber) {
+  var edits = planHeaderDateEdits(tableCells_(table), op.headerDates);
+  for (var e = edits.length - 1; e >= 0; e--) {
+    var ed = edits[e];
+    var key = 'f:' + op.id + '#h' + tableIndex + ':' + ed.row + ':' + ed.col + ':' + ed.start;
+    var decision = decideFill(ed.oldText, ed.newText, props.getProperty(key), !!force);
+    if (decision === 'fill') {
+      var range = table.getCell(ed.row, ed.col).getText().getRange(ed.start, ed.end);
+      var style = readStyle_(range);
+      range.setText(ed.newText);
+      writeStyle_(table.getCell(ed.row, ed.col).getText().getRange(ed.start, ed.start + ed.newText.length), style);
+      counts.filled++;
+      props.setProperty(key, ed.newText);
+    } else if (decision === 'skipped_edited') {
+      counts.skipped_edited++;
+      problems.push(op.id + ': วันที่หัวตารางหน้า ' + slideNumber + ' ทีมแก้ไว้แล้ว (ข้าม)');
+    } else {
+      counts.unchanged++;
+    }
+  }
+}
+
+// One "table" op on one slide: fills the numeric cells of every table whose header matches.
+// Returns true when at least one row of a table was matched.
 function applyTableOp_(op, slide, props, force, counts, problems) {
   var touched = false;
   for (var t = 0; t < slide.tables.length; t++) {
     var table = slide.tables[t];
     var cells = tableCells_(table);
     if (!cells.length || cells[0][0].indexOf(op.table.headerContains) < 0) continue;
-    touched = true;
     var plan = planTableEdits(cells, op);
+    if (!plan.edits.length) continue; // not a table of ours (e.g. TikTok, LINE)
+    touched = true;
     for (var e = 0; e < plan.edits.length; e++) {
       var ed = plan.edits[e];
       var key = 'f:' + op.id + '#' + t + ':' + ed.row + ':' + ed.col;
@@ -196,8 +228,9 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
         problems.push(op.id + ': ทีมแก้ไว้แล้ว (ข้าม) หน้า ' + slide.number + ' แถว ' + ed.row + ' คอลัมน์ ' + ed.col + ' เดิม "' + ed.oldText + '"');
       }
     }
-    for (var u = 0; u < plan.unmatchedRows.length; u++) problems.push('ℹ️ หน้า ' + slide.number + ' แถว "' + plan.unmatchedRows[u] + '" ไม่มี ad set ที่ชื่อตรงกัน (ไม่ได้แก้)');
-    if (plan.unusedCandidates.length) problems.push('ℹ️ หน้า ' + slide.number + ' ad set ที่ยังไม่มีแถวในตาราง: ' + plan.unusedCandidates.join(', '));
+    if (op.headerDates) applyHeaderDates_(table, op, t, props, force, counts, problems, slide.number);
+    for (var u = 0; u < plan.unmatchedRows.length; u++) problems.push('ℹ️ หน้า ' + slide.number + ' แถว "' + plan.unmatchedRows[u] + '" ไม่มีข้อมูลที่ชื่อตรงกัน (ไม่ได้แก้)');
+    if (op.slide && plan.unusedCandidates.length) problems.push('ℹ️ หน้า ' + slide.number + ' ad set ที่ยังไม่มีแถวในตาราง: ' + plan.unusedCandidates.join(', '));
   }
   return touched;
 }
@@ -214,6 +247,15 @@ function applyPayload(jsonText, force) {
 
   for (var i = 0; i < payload.fills.length; i++) {
     var op = payload.fills[i];
+    if (op.kind === 'table' && !op.slide) {
+      var any = false;
+      for (var si = 0; si < index.length; si++) {
+        if (applyTableOp_(op, index[si], props, force, counts, problems)) any = true;
+      }
+      if (!any) { counts.not_found++; problems.push(op.id + ': ไม่พบตารางสรุปที่มีแถวตรงกับแคมเปญ'); }
+      continue;
+    }
+
     var slide = findSlide_(index, op.slide);
     if (!slide) {
       counts.not_found++;
@@ -228,7 +270,7 @@ function applyPayload(jsonText, force) {
     if (op.kind === 'table') {
       if (!applyTableOp_(op, slide, props, force, counts, problems)) {
         counts.not_found++;
-        problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบตารางที่หัวคอลัมน์มี "' + op.table.headerContains + '"');
+        problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบตารางที่หัวคอลัมน์มี "' + op.table.headerContains + '" และมีแถวตรงกับ ad set');
       }
       continue;
     }

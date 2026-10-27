@@ -146,9 +146,57 @@ test('table: a team row with no data is reported, a label prefix still matches',
   assert.strictEqual(plan.edits[0].oldText, '');
 });
 
-test('table: one candidate is used once even if two rows share a prefix', () => {
+test('table: an exact label wins over a prefix, and a candidate is used once', () => {
   const rows = [TABLE[0], ['1. CA', 'x', 'x', 'x', 'x'], ['2. CA+LAL', 'x', 'x', 'x', 'x']];
   const plan = core.planTableEdits(rows, { candidates: CANDIDATES });
-  assert.deepStrictEqual(plan.unmatchedRows, ['2. CA+LAL']);
+  assert.deepStrictEqual(plan.unmatchedRows, ['1. CA']);
+  assert.ok(plan.edits.every((e) => e.row === 2));
+});
+
+// Summary tables (slides 24-39): labels the team wrote vs campaign names / aliases from the API
+const SUMMARY = {
+  candidates: ([
+    { name: 'Search-Tier 1&2 -MaxConv.', key: 'Search-Tier1&2-MaxConv.', cells: { 1: 'S12' } },
+    { name: 'Search Tier3 mid 5 สาขา - 4 จังหวัด #2', key: 'SearchTier3mid5สาขา-4จังหวัด#2', cells: { 1: 'S3M' } },
+    { name: 'GDN-Tier 1&2 - Custom intent  70%', key: 'GDN-Tier1&2-Customintent70%', cells: { 1: 'GDN70' } },
+    { name: 'GDN-Tier 1&2 - Core Audience 30%', key: 'GDN-Tier1&2-CoreAudience30%', cells: { 1: 'GDN30' } },
+    { name: 'GMB Tier 1 (ชลบุรี,นครปฐม, ระยอง)', key: 'GMBTier1(ชลบุรี,นครปฐม,ระยอง)', cells: { 1: 'G1' } },
+    { name: 'GMB แสงไทย Tier2  (นครราชสีมา,เชียงใหม่ - ลำพูน, ขอนแก่น,อุดรธานี,สุรินทร์))', key: 'x', cells: { 1: 'G2' } },
+    { name: 'Video views Re 2025', key: 'Videoviewsre2025', aliases: ['VDO'], cells: { 1: 'VDO' } },
+    { name: 'Engagement VDO', key: 'EngagementVDO', cells: { 1: 'EVDO' } },
+    { name: 'Engagement', key: 'Engagement', cells: { 1: 'ENG' } },
+    { name: 'Page Like', key: 'PageLike', cells: { 1: 'PL' } },
+  ]).map((c) => ({ ...c, key: core.normKey(c.name) })), // keys come from the same normaliser as the backend
+};
+const rowsOf = (...labels) => [['Campaign', 'Amount spent', 'Result', 'Cost'], ...labels.map((l) => [l, 'old', '', '', '', '', '', ''])];
+const matched = (plan) => plan.edits.map((e) => `${e.row}:${e.newText}`);
+
+test('summary tables: team labels match campaigns (prefix, case-insensitive, last segment, alias)', () => {
+  assert.deepStrictEqual(matched(core.planTableEdits(rowsOf('Search-Tier 1&2', 'Search Tier3 Mid '), SUMMARY)), ['1:S12', '2:S3M']);
+  assert.deepStrictEqual(matched(core.planTableEdits(rowsOf('GDN-Sangthai - Custom intent 70%', 'GDN-Sangthai - Core Audience 30%'), SUMMARY)), ['1:GDN70', '2:GDN30']);
+  assert.deepStrictEqual(matched(core.planTableEdits(rowsOf('GMB Tier 1 (ชลบุรี,นครปฐม, ระยอง)', 'GMB แสงไทย Tier 2  (นครราชสีมา,เชียงใหม่ - ลำพูน, ขอนแก่น,อุดรธานี,สุรินทร์))'), SUMMARY)), ['1:G1', '2:G2']);
+  assert.deepStrictEqual(matched(core.planTableEdits(rowsOf('VDO Awareness '), SUMMARY)), ['1:VDO']);
+});
+
+test('summary tables: Engagement / Engagement VDO / Page Like do not steal each other', () => {
+  for (const [label, want] of [['Engagement', 'ENG'], ['Engagement VDO', 'EVDO'], ['Page Like', 'PL']]) {
+    assert.deepStrictEqual(matched(core.planTableEdits(rowsOf(label), SUMMARY)), [`1:${want}`]);
+  }
+});
+
+test('summary tables: a table of another platform matches nothing', () => {
+  const plan = core.planTableEdits(rowsOf('TIKTOK 6-second view', 'Follower'), SUMMARY);
+  assert.strictEqual(plan.edits.length, 0);
+});
+
+test('header dates: replaces both dates of Current and Previous only when they differ', () => {
+  const header = [['Campaign', 'Amount spent', 'Result'], ['Current\n16/08/2026\n-\n 15/09/2026', 'Previous\n16/07/2026\n-\n 15/08/2026', 'Difference']];
+  const hd = { current: ['16/09/2026', '15/10/2026'], previous: ['16/08/2026', '15/09/2026'] };
+  const edits = core.planHeaderDateEdits(header, hd);
+  assert.deepStrictEqual(edits.map((e) => [e.col, e.oldText, e.newText]), [
+    [0, '16/08/2026', '16/09/2026'], [0, '15/09/2026', '15/10/2026'], [1, '16/07/2026', '16/08/2026'], [1, '15/08/2026', '15/09/2026'],
+  ]);
+  const same = [['Campaign'], ['Current\n16/09/2026\n-\n 15/10/2026', 'Previous\n16/08/2026\n-\n 15/09/2026']];
+  assert.deepStrictEqual(core.planHeaderDateEdits(same, hd), []);
 });
 

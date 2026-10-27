@@ -92,37 +92,91 @@ function planShapeEdits(text, op) {
 }
 
 /**
- * Table fill: the team owns the first column (labels like "1. CA+LAL"); we match each row to a candidate by key
- * and write only the numeric cells. cells = 2D array of current cell texts, row 0 = header.
+ * Table fill: the team owns the first column (labels like "1. CA+LAL"); we match each row to a candidate and write
+ * only the other cells. cells = 2D array of current cell texts, row 0 = header.
+ * Matching, strongest first (case-insensitive, spaces/dots/dashes ignored):
+ *   1. exact key (candidate key or alias)   2. one key is a prefix of the other
+ *   3. same last segment after " - " (team label "GDN-Sangthai - Custom intent 70%" vs "GDN-Tier 1&2 - Custom intent 70%")
  * Returns { edits: [{row, col, oldText, newText}], unmatchedRows: [label], unusedCandidates: [name] }.
  */
 function planTableEdits(cells, op) {
-  var edits = [];
-  var unmatchedRows = [];
-  var used = {};
+  var low = function (v) { return normKey(v).toLowerCase(); };
+  var lastSegment = function (v) {
+    var parts = String(v).split(/[ \t\u00a0]-[ \t\u00a0]/);
+    return parts.length > 1 ? low(parts[parts.length - 1]) : null;
+  };
+  var cands = op.candidates.map(function (c) {
+    var keys = [String(c.key).toLowerCase()];
+    (c.aliases || []).forEach(function (a) { keys.push(low(a)); });
+    return { keys: keys, last: lastSegment(c.name), c: c };
+  });
+
+  var rows = [];
   for (var r = 1; r < cells.length; r++) {
     var label = String(cells[r][0] || '');
-    var key = normKey(label.replace(/^[ \t\u00a0]*\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, ''));
-    if (!key) continue;
-    var found = -1;
-    for (var i = 0; i < op.candidates.length; i++) {
-      if (used[i]) continue;
-      var ck = op.candidates[i].key;
-      if (ck.indexOf(key) === 0 || key.indexOf(ck) === 0) { found = i; break; }
-    }
-    if (found < 0) { unmatchedRows.push(label.replace(/\s+/g, ' ').replace(/^ | $/g, '')); continue; }
-    used[found] = true;
-    var values = op.candidates[found].cells;
+    var stripped = label.replace(/^[ \t\u00a0]*\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, '');
+    var key = low(stripped);
+    if (key) rows.push({ r: r, label: label, key: key, last: lastSegment(stripped), cand: -1 });
+  }
+
+  var used = {};
+  var passes = [
+    function (row, cd) { return cd.keys.indexOf(row.key) >= 0; },
+    function (row, cd) {
+      return cd.keys.some(function (k) { return k.indexOf(row.key) === 0 || (k.length >= 3 && row.key.indexOf(k) === 0); });
+    },
+    function (row, cd) { return !!row.last && !!cd.last && row.last === cd.last; },
+  ];
+  passes.forEach(function (test) {
+    rows.forEach(function (row) {
+      if (row.cand >= 0) return;
+      for (var i = 0; i < cands.length; i++) {
+        if (used[i] || !test(row, cands[i])) continue;
+        row.cand = i;
+        used[i] = true;
+        return;
+      }
+    });
+  });
+
+  var edits = [];
+  var unmatchedRows = [];
+  rows.forEach(function (row) {
+    if (row.cand < 0) { unmatchedRows.push(row.label.replace(/\s+/g, ' ').replace(/^ | $/g, '')); return; }
+    var values = cands[row.cand].c.cells;
     for (var col in values) {
       if (!Object.prototype.hasOwnProperty.call(values, col)) continue;
       var c = Number(col);
-      var old = String(cells[r][c] === undefined ? '' : cells[r][c]).replace(/[\s\u00a0]+$/, '');
-      edits.push({ row: r, col: c, oldText: old, newText: values[col] });
+      var old = String(cells[row.r][c] === undefined ? '' : cells[row.r][c]).replace(/[\s\u00a0]+$/, '');
+      edits.push({ row: row.r, col: c, oldText: old, newText: values[col] });
+    }
+  });
+  var unusedCandidates = [];
+  for (var j = 0; j < cands.length; j++) if (!used[j]) unusedCandidates.push(cands[j].c.name);
+  return { edits: edits, unmatchedRows: unmatchedRows, unusedCandidates: unusedCandidates };
+}
+
+/**
+ * Header cells "Current / 16/09/2026 / - / 15/10/2026" and "Previous …": replace the two dates of each.
+ * Returns [{row, col, start, end, oldText, newText}] for rows 0-2.
+ */
+function planHeaderDateEdits(cells, headerDates) {
+  var edits = [];
+  for (var r = 0; r < Math.min(3, cells.length); r++) {
+    for (var c = 0; c < cells[r].length; c++) {
+      var text = String(cells[r][c] || '');
+      var which = text.indexOf('Current') >= 0 ? headerDates.current : text.indexOf('Previous') >= 0 ? headerDates.previous : null;
+      if (!which) continue;
+      var re = /\d{2}\/\d{2}\/\d{4}/g;
+      var m;
+      var i = 0;
+      while ((m = re.exec(text)) !== null && i < 2) {
+        if (m[0] !== which[i]) edits.push({ row: r, col: c, start: m.index, end: m.index + m[0].length, oldText: m[0], newText: which[i] });
+        i++;
+      }
     }
   }
-  var unusedCandidates = [];
-  for (var j = 0; j < op.candidates.length; j++) if (!used[j]) unusedCandidates.push(op.candidates[j].name);
-  return { edits: edits, unmatchedRows: unmatchedRows, unusedCandidates: unusedCandidates };
+  return edits;
 }
 
 // Apply edits to a string (used by tests; the real script edits ranges one by one, last first).
@@ -169,5 +223,5 @@ function shapeMatches_(text, selector) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }
