@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v3-2026-10-27';
+var SCRIPT_VERSION = 'v3.1-fast-2026-10-27';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -67,7 +67,9 @@ function buildIndex_() {
     collectShapes_(slide.getPageElements(), w, h, shapes);
     var tables = [];
     collectTables_(slide.getPageElements(), w, h, tables);
-    return { number: i + 1, shapes: shapes, tables: tables };
+    // Read every text once: finding a slide for each of ~200 ops would otherwise re-read the whole deck each time
+    var texts = shapes.map(function (sh) { try { return sh.getText().asString(); } catch (e) { return ''; } });
+    return { number: i + 1, shapes: shapes, texts: texts, tables: tables };
   });
 }
 
@@ -77,9 +79,9 @@ function shapeText_(shape) {
 
 function findSlide_(index, selector) {
   for (var i = 0; i < index.length; i++) {
-    var shapes = index[i].shapes;
-    for (var j = 0; j < shapes.length; j++) {
-      var t = shapeText_(shapes[j]);
+    var texts = index[i].texts;
+    for (var j = 0; j < texts.length; j++) {
+      var t = texts[j];
       if (selector.containsText && t.indexOf(selector.containsText) >= 0) return index[i];
       if (selector.titlePrefix && slideTitleMatches_(t, selector)) return index[i];
     }
@@ -256,12 +258,24 @@ function applyPayload(jsonText, force) {
   var payload = JSON.parse(jsonText);
   if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
 
-  var props = PropertiesService.getDocumentProperties();
+  // Remembered values: read once, collect writes, save once at the end (hundreds of single calls made the run very slow)
+  var docProps = PropertiesService.getDocumentProperties();
+  var storedMap = docProps.getProperties();
+  var pending = {};
+  var props = {
+    getProperty: function (k) {
+      if (Object.prototype.hasOwnProperty.call(pending, k)) return pending[k];
+      return Object.prototype.hasOwnProperty.call(storedMap, k) ? storedMap[k] : null;
+    },
+    setProperty: function (k, v) { pending[k] = v; },
+  };
+  var slideCache = {};
   var index = buildIndex_();
   var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0 };
   var problems = [];
   var debugShown = false;
 
+  try {
   for (var i = 0; i < payload.fills.length; i++) {
     var op = payload.fills[i];
     if (op.kind === 'table' && !op.slide) {
@@ -273,7 +287,9 @@ function applyPayload(jsonText, force) {
       continue;
     }
 
-    var slide = findSlide_(index, op.slide);
+    var cacheKey = JSON.stringify(op.slide);
+    if (!Object.prototype.hasOwnProperty.call(slideCache, cacheKey)) slideCache[cacheKey] = findSlide_(index, op.slide);
+    var slide = slideCache[cacheKey];
     if (!slide) {
       counts.not_found++;
       problems.push(op.id + ': ไม่พบหน้า');
@@ -322,6 +338,10 @@ function applyPayload(jsonText, force) {
       done = true; // first matching shape only
     }
     if (!edited) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่อง/บรรทัดที่ตรงกัน'); }
+  }
+
+  } finally {
+    try { docProps.setProperties(pending, false); } catch (e) {}
   }
 
   return {
