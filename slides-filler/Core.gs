@@ -116,6 +116,8 @@ function planTableEdits(cells, op) {
     var label = String(cells[r][0] || '');
     var stripped = label.replace(/^[ \t\u00a0]*\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, '');
     var key = low(stripped);
+    // second header row ("Current 16/09/2026 - …") is not a data row
+    if (/^[ \t\u00a0]*(Current|Previous|Difference)\b/.test(label)) continue;
     if (key) rows.push({ r: r, label: label, key: key, last: lastSegment(stripped), cand: -1 });
   }
 

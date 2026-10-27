@@ -221,3 +221,14 @@ test('buildGrid: a label spanning two columns shifts the visible columns, cols m
   assert.deepStrictEqual(plan.edits.map((e) => [e.row, grid.cols[e.row][e.col], e.oldText]), [[2, 2, '฿9,625.83'], [2, 3, '1,515 clicks']]);
 });
 
+test('table: the second header row (Current / Previous dates) is not reported as an unmatched data row', () => {
+  const rows = [
+    ['Campaign', 'Amount spent', 'Result', 'Cost per Result'],
+    ['Current\n16/09/2026\n-\n 15/10/2026', 'Previous\n16/08/2026\n-\n 15/09/2026', 'Difference'],
+    ['Engagement', 'x', 'x', 'x', 'x', 'x', 'x', 'x'],
+  ];
+  const plan = core.planTableEdits(rows, SUMMARY);
+  assert.deepStrictEqual(plan.unmatchedRows, []);
+  assert.deepStrictEqual(plan.edits.map((e) => e.row), [2]);
+});
+

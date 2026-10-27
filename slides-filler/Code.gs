@@ -6,9 +6,9 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v2-grid-2026-10-27';
-// Prefix of the remembered values. v2: older runs wrote some table cells one column off, so their memory is not trusted.
-var PROP_PREFIX = 'v2:';
+var SCRIPT_VERSION = 'v3-2026-10-27';
+// Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
+var PROP_PREFIX = 'v3:';
 
 function onOpen() {
   SlidesApp.getUi()
