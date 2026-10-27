@@ -25,6 +25,7 @@
 | `get_keyword_report` | Search Terms, Quality Score (Google) | วิเคราะห์ keyword performance |
 | `get_budget_history` | ประวัติการเปลี่ยน Budget | ตรวจว่า budget เปลี่ยนเมื่อไหร่ |
 | `get_campaign_config` | Objective, Bid Strategy, Schedule | ตรวจการตั้งค่า Campaign |
+| `get_monthly_report_data` | ตัวเลขรายงานรายเดือนรอบ 16–15 เทียบรอบก่อน: Overview, Google (Search/GDN/GMB/VDO), Facebook, Facebook แยกสาขา (ดึงสดจาก API) | ทำสไลด์รายงานประจำเดือน — ดู `workflows/monthly_report.md` |
 
 ---
 

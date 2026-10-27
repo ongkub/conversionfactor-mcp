@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 12px; }
+    textarea { width: 100%; height: 210px; box-sizing: border-box; font-family: monospace; font-size: 11px; }
+    button { padding: 8px 16px; margin-top: 8px; }
+    #out { margin-top: 12px; white-space: pre-wrap; }
+    .err { color: #b3261e; }
+    label { display: block; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div>วางข้อความ JSON จากหัวข้อ <b>"7. JSON สำหรับสคริปต์เติมสไลด์"</b> ของ tool <code>get_monthly_report_data</code> (เฉพาะข้อความในกล่อง <code>{ … }</code>)</div>
+  <textarea id="json" placeholder='{"schema":"sangthai-slides/1", …}'></textarea>
+  <label><input type="checkbox" id="force"> ทับกล่องที่ทีมแก้ไว้ด้วย (ปกติไม่ต้องติ๊ก)</label>
+  <button id="run" onclick="run()">เติมข้อมูล</button>
+  <div id="out"></div>
+  <script>
+    function run() {
+      var out = document.getElementById('out');
+      var btn = document.getElementById('run');
+      out.className = ''; out.textContent = 'กำลังเติม…'; btn.disabled = true;
+      google.script.run
+        .withSuccessHandler(function (r) {
+          btn.disabled = false;
+          var c = r.counts;
+          var t = 'ข้อมูลรอบ ' + (r.period ? r.period.current : '') + ' (ดึงเมื่อ ' + r.generated_at + ')\n' +
+            'เติมแล้ว ' + c.filled + ' · ตรงอยู่แล้ว ' + c.unchanged + ' · ข้าม (ทีมแก้) ' + c.skipped_edited + ' · ไม่พบ ' + c.not_found;
+          if (r.problems.length) t += '\n\nต้องดู:\n- ' + r.problems.join('\n- ');
+          if (r.needs_review.length) t += '\n\nทีมต้องเติมเอง:\n- ' + r.needs_review.join('\n- ');
+          out.textContent = t;
+        })
+        .withFailureHandler(function (e) { btn.disabled = false; out.className = 'err'; out.textContent = e.message; })
+        .applyPayload(document.getElementById('json').value, document.getElementById('force').checked);
+    }
+  </script>
+</body>
+</html>
