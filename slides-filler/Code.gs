@@ -5,6 +5,8 @@
  */
 
 var SCHEMA = 'sangthai-slides/1';
+// Prefix of the remembered values. v2: older runs wrote some table cells one column off, so their memory is not trusted.
+var PROP_PREFIX = 'v2:';
 
 function onOpen() {
   SlidesApp.getUi()
@@ -153,14 +155,13 @@ function debugTitle_(selector) {
   return found;
 }
 
-function tableCells_(table) {
-  var rows = [];
-  for (var r = 0; r < table.getNumRows(); r++) {
-    var row = [];
-    for (var c = 0; c < table.getNumColumns(); c++) row.push(table.getCell(r, c).getText().asString());
-    rows.push(row);
-  }
-  return rows;
+// Rows of a table as the reader sees them: merged cells that are not the top-left one are left out.
+// texts[r][k] = text of the k-th visible cell of row r, cols[r][k] = its real column in the grid
+// (a label cell that spans 2 columns makes "Amount spent" visible column 1 but grid column 2).
+function tableGrid_(table) {
+  return buildGrid(table.getNumRows(), table.getNumColumns(), function (r, c) {
+    return table.getCell(r, c).getText().asString(); // throws for a merged cell that is not the top-left one
+  });
 }
 
 // Replace the whole text of one cell, keeping the look of the old text.
@@ -178,19 +179,24 @@ function setCellText_(table, row, col, newText) {
 }
 
 // "Current 16/09/2026 - 15/10/2026" / "Previous …" cells in the header rows of a table we fill
-function applyHeaderDates_(table, op, tableIndex, props, force, counts, problems, slideNumber) {
-  var edits = planHeaderDateEdits(tableCells_(table), op.headerDates);
+function applyHeaderDates_(table, grid, op, tableIndex, props, force, counts, problems, slideNumber) {
+  var edits = planHeaderDateEdits(grid.texts, op.headerDates);
   for (var e = edits.length - 1; e >= 0; e--) {
     var ed = edits[e];
-    var key = 'f:' + op.id + '#h' + tableIndex + ':' + ed.row + ':' + ed.col + ':' + ed.start;
+    var gridCol = grid.cols[ed.row][ed.col];
+    var key = PROP_PREFIX + op.id + '#h' + tableIndex + ':' + ed.row + ':' + ed.col + ':' + ed.start;
     var decision = decideFill(ed.oldText, ed.newText, props.getProperty(key), !!force);
     if (decision === 'fill') {
-      var range = table.getCell(ed.row, ed.col).getText().getRange(ed.start, ed.end);
-      var style = readStyle_(range);
-      range.setText(ed.newText);
-      writeStyle_(table.getCell(ed.row, ed.col).getText().getRange(ed.start, ed.start + ed.newText.length), style);
-      counts.filled++;
-      props.setProperty(key, ed.newText);
+      try {
+        var range = table.getCell(ed.row, gridCol).getText().getRange(ed.start, ed.end);
+        var style = readStyle_(range);
+        range.setText(ed.newText);
+        writeStyle_(table.getCell(ed.row, gridCol).getText().getRange(ed.start, ed.start + ed.newText.length), style);
+        counts.filled++;
+        props.setProperty(key, ed.newText);
+      } catch (err) {
+        problems.push(op.id + ': เขียนวันที่หัวตารางหน้า ' + slideNumber + ' ไม่ได้ (' + err.message + ')');
+      }
     } else if (decision === 'skipped_edited') {
       counts.skipped_edited++;
       problems.push(op.id + ': วันที่หัวตารางหน้า ' + slideNumber + ' ทีมแก้ไว้แล้ว (ข้าม)');
@@ -206,20 +212,29 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
   var touched = false;
   for (var t = 0; t < slide.tables.length; t++) {
     var table = slide.tables[t];
-    var cells = tableCells_(table);
-    if (!cells.length || cells[0][0].indexOf(op.table.headerContains) < 0) continue;
+    var grid = tableGrid_(table);
+    var cells = grid.texts;
+    if (!cells.length || !cells[0].length || cells[0][0].indexOf(op.table.headerContains) < 0) continue;
     var plan = planTableEdits(cells, op);
     if (!plan.edits.length) continue; // not a table of ours (e.g. TikTok, LINE)
     touched = true;
     for (var e = 0; e < plan.edits.length; e++) {
       var ed = plan.edits[e];
-      var key = 'f:' + op.id + '#' + t + ':' + ed.row + ':' + ed.col;
+      var key = PROP_PREFIX + op.id + '#' + t + ':' + ed.row + ':' + ed.col;
       var stored = props.getProperty(key);
       var decision = decideFill(ed.oldText, ed.newText, stored, !!force);
       if (decision === 'fill') {
-        setCellText_(table, ed.row, ed.col, ed.newText);
-        counts.filled++;
-        props.setProperty(key, ed.newText);
+        try {
+          var gridCol = grid.cols[ed.row][ed.col];
+          if (gridCol === undefined) throw new Error('ไม่มีคอลัมน์ที่ ' + ed.col + ' ในแถวนี้');
+          setCellText_(table, ed.row, gridCol, ed.newText);
+          counts.filled++;
+          props.setProperty(key, ed.newText);
+        } catch (err) {
+          // e.g. a merged cell that is not the top-left one
+          counts.not_found++;
+          problems.push(op.id + ': เขียนเซลล์ไม่ได้ หน้า ' + slide.number + ' แถว ' + ed.row + ' คอลัมน์ ' + ed.col + ' (' + err.message + ')');
+        }
       } else if (decision === 'unchanged') {
         counts.unchanged++;
         props.setProperty(key, ed.newText);
@@ -228,7 +243,7 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
         problems.push(op.id + ': ทีมแก้ไว้แล้ว (ข้าม) หน้า ' + slide.number + ' แถว ' + ed.row + ' คอลัมน์ ' + ed.col + ' เดิม "' + ed.oldText + '"');
       }
     }
-    if (op.headerDates) applyHeaderDates_(table, op, t, props, force, counts, problems, slide.number);
+    if (op.headerDates) applyHeaderDates_(table, grid, op, t, props, force, counts, problems, slide.number);
     for (var u = 0; u < plan.unmatchedRows.length; u++) problems.push('ℹ️ หน้า ' + slide.number + ' แถว "' + plan.unmatchedRows[u] + '" ไม่มีข้อมูลที่ชื่อตรงกัน (ไม่ได้แก้)');
     if (op.slide && plan.unusedCandidates.length) problems.push('ℹ️ หน้า ' + slide.number + ' ad set ที่ยังไม่มีแถวในตาราง: ' + plan.unusedCandidates.join(', '));
   }
@@ -285,7 +300,7 @@ function applyPayload(jsonText, force) {
       if (!edits.length) continue;
 
       for (var e = edits.length - 1; e >= 0; e--) {
-        var key = 'f:' + op.id + '#' + e;
+        var key = PROP_PREFIX + op.id + '#' + e;
         var stored = props.getProperty(key);
         var decision = decideFill(edits[e].oldText, edits[e].newText, stored, !!force);
         if (decision === 'fill') {

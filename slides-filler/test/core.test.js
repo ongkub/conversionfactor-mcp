@@ -200,3 +200,24 @@ test('header dates: replaces both dates of Current and Previous only when they d
   assert.deepStrictEqual(core.planHeaderDateEdits(same, hd), []);
 });
 
+// Slide 24 of the OCT deck: 9 grid columns, the label spans columns 0-1 (column 1 is merged away)
+test('buildGrid: a label spanning two columns shifts the visible columns, cols maps them back to the grid', () => {
+  const merged = { '2:1': true, '0:1': true, '0:4': true, '0:5': true, '0:7': true, '0:8': true, '1:0': true, '1:1': true };
+  const data = [
+    ['Campaign', '', 'Amount spent', 'Result', '', '', 'Cost per Result', '', ''],
+    ['', '', 'Current', 'Previous', 'Difference', 'Current', 'Previous', 'Difference', ''],
+    ['Search-Tier 1&2', '', '฿9,625.83', '1,515 clicks', '1,659 clicks', '-144 clicks', 'CPC : 6.35', 'CPC : 6.88', 'CPC : -฿0.53'],
+  ];
+  const grid = core.buildGrid(3, 9, (r, c) => {
+    if (merged[`${r}:${c}`]) throw new Error('only the top-left cell of a merge');
+    return data[r][c];
+  });
+  assert.strictEqual(grid.texts[2][0], 'Search-Tier 1&2');
+  assert.strictEqual(grid.texts[2][1], '฿9,625.83'); // "Amount spent" is visible column 1 ...
+  assert.strictEqual(grid.cols[2][1], 2); // ... but grid column 2: this was the off-by-one that wrote into the wrong cells
+  assert.deepStrictEqual(grid.cols[2], [0, 2, 3, 4, 5, 6, 7, 8]);
+  // the plan uses visible columns, the writer maps them back
+  const plan = core.planTableEdits(grid.texts, { candidates: [{ name: 'Search-Tier 1&2 -MaxConv.', key: 'SearchTier1&2MaxConv', cells: { 1: 'SPEND', 2: 'RES' } }] });
+  assert.deepStrictEqual(plan.edits.map((e) => [e.row, grid.cols[e.row][e.col], e.oldText]), [[2, 2, '฿9,625.83'], [2, 3, '1,515 clicks']]);
+});
+

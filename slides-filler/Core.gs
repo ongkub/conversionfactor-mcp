@@ -179,6 +179,29 @@ function planHeaderDateEdits(cells, headerDates) {
   return edits;
 }
 
+/**
+ * Rows of a table as the reader sees them: cells that cannot be read (merged, not the top-left one) are left out.
+ * readCell(r, c) returns the text or throws. Returns { texts[r][k], cols[r][k] } where cols maps the k-th visible
+ * cell back to its real column — a label spanning 2 columns makes "Amount spent" visible column 1, grid column 2.
+ */
+function buildGrid(numRows, numCols, readCell) {
+  var texts = [];
+  var cols = [];
+  for (var r = 0; r < numRows; r++) {
+    var rowTexts = [];
+    var rowCols = [];
+    for (var c = 0; c < numCols; c++) {
+      var text;
+      try { text = readCell(r, c); } catch (e) { continue; }
+      rowTexts.push(text);
+      rowCols.push(c);
+    }
+    texts.push(rowTexts);
+    cols.push(rowCols);
+  }
+  return { texts: texts, cols: cols };
+}
+
 // Apply edits to a string (used by tests; the real script edits ranges one by one, last first).
 function applyEdits_(text, edits) {
   var sorted = edits.slice().sort(function (a, b) { return b.start - a.start; });
@@ -223,5 +246,5 @@ function shapeMatches_(text, selector) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }
