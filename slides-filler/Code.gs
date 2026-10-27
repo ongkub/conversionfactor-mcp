@@ -5,6 +5,8 @@
  */
 
 var SCHEMA = 'sangthai-slides/1';
+// Shown in the result so it is obvious which copy of this script is running
+var SCRIPT_VERSION = 'v2-grid-2026-10-27';
 // Prefix of the remembered values. v2: older runs wrote some table cells one column off, so their memory is not trusted.
 var PROP_PREFIX = 'v2:';
 
@@ -323,7 +325,7 @@ function applyPayload(jsonText, force) {
   }
 
   return {
-    generated_at: payload.generated_at,
+    generated_at: payload.generated_at + ' · สคริปต์ ' + SCRIPT_VERSION,
     period: payload.period,
     counts: counts,
     problems: problems.slice(0, 40),
