@@ -68,6 +68,12 @@
 
 ---
 
+## อัปเดตเมื่อมี tool ใหม่
+
+- **tool ใหม่ใช้ได้ทันที** เพราะ MCP Server อยู่บน Cloud ไม่ต้องติดตั้งใหม่ (ถ้า Claude ยังไม่เห็น ให้ปิด-เปิด Claude Desktop หรือเริ่มแชตใหม่)
+- สิ่งที่ต้องอัปเดตเองเมื่อมีการเปลี่ยน: **Project Instructions** — เปิดไฟล์ `CONVERSIONFACTOR_PROMPT.md` เวอร์ชันล่าสุด แล้ววางทับใน Claude Project (ครั้งล่าสุดเพิ่มกติกาของ `get_monthly_report_data`)
+- ใครที่ตั้งค่าไว้ตั้งแต่ก่อนมี tool รายงานรายเดือน ให้ทำข้อ 2 หนึ่งครั้ง
+
 ## ทดสอบว่าเชื่อมต่อสำเร็จ
 
 ลองพิมพ์ใน Chat:
@@ -111,6 +117,7 @@ Sangthai มี anomaly อะไรบ้างสัปดาห์นี้
 | `conversion_funnel` | Full Attribution: Ad Spend → Events → Revenue → True ROAS |
 | `pixel_health_check` | ตรวจ Pixel/CAPI signal และ event volume drop |
 | `suggest_audience_plan` | วางแผน Audience Targeting จาก business context |
+| `get_monthly_report_data` | ตัวเลขรายงานรายเดือน 16–15 + JSON เติม Google Slides (คู่มือ: https://conversion.sparkth.io/admin/help/monthly-report) |
 
 ---
 
