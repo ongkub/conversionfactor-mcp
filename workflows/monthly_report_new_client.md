@@ -66,7 +66,7 @@ Meta / Google / LINE API ──► tool get_monthly_report_data ──► JSON "
 | หน้าสาขา (17 สาขา) | `branch-details.ts`, `slide-fills.ts` | หัวหน้า "Message Campaign" + ชื่อสาขา | ลูกค้าที่ไม่มีโครงสาขา ข้ามส่วนนี้ได้ (ไม่ส่ง branchDetails) |
 | ข้อความอ้างอิงในสไลด์ | `slide-fills.ts` (`containsText`, `titlePrefix`, `label`) | เช่น `Actual Spending`, `Gain Friend Campaign`, `Optimisation goal : …` | ต้องตรงกับถ้อยคำในแม่แบบของลูกค้า (หัวข้อ 5) |
 | LINE Ads | `line-monthly.ts` | เพื่อน = คลิกของแคมเปญ objective GAIN_FRIENDS | ปรับถ้าลูกค้าใช้ objective อื่น |
-| ชื่อ schema ใน JSON | `SLIDES_SCHEMA = 'sangthai-slides/1'` | ชื่อติดแสงไทย | เปลี่ยนชื่อได้ แต่ต้องแก้ Core.gs ที่เช็กชื่อนี้พร้อมกัน |
+| ชื่อ schema ใน JSON | `SLIDES_SCHEMA = 'sangthai-slides/1'` | ชื่อติดแสงไทย | เปลี่ยนชื่อได้ แต่ต้องแก้ `SCHEMA` ใน Code.gs พร้อมกัน |
 
 > ข้อสรุปตรงๆ: ลูกค้ารายใหม่ที่ **ตั้งชื่อแคมเปญคนละแบบ** หรือ **ใช้แม่แบบสไลด์คนละหน้าตา** ยังต้องมีงานแก้โค้ดเล็กน้อยถึงปานกลาง
 > ถ้าจะทำให้ลูกค้า 3 รายขึ้นไป ควรย้ายกติกาข้างบนไปเป็น "ค่าตั้งค่าต่อ org" (config) ก่อน — ตอนนี้ยังไม่ได้ทำ
