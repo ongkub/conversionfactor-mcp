@@ -4,7 +4,8 @@
 **Phase 1:** วันที่รอบรายงาน (ปก + Overview) · Overview (งบ Facebook/Google, Search/GDN/GMB/VDO, Page Like) · หัวตัวเลขหน้าสาขา 17 หน้า + Page Like ชัยภูมิ (สี % ตามกติกาทีม)
 **Phase 2:** หน้าสาขา — ตาราง **Ads Target** (Result, CPA, Budget, MoM ของแต่ละ ad set จับคู่กับแถวด้วยชื่อ ไม่แตะคอลัมน์ชื่อของทีม) และกล่อง **Ads Creative** อันดับ 1–3 (Message / CTR ของครีเอทีฟที่รวมโฆษณาชื่อเดียวกัน)
 **Phase 1b:** ตารางสรุป Google (หน้า 24, 26, 28, 30) และ Facebook (หน้า 35, 37, 39) — จับคู่แถวด้วยชื่อที่ทีมตั้ง (ไม่ต้องตรงทุกตัวอักษร: ตัวพิมพ์เล็กใหญ่, เว้นวรรค/ขีด, คำนำหน้า, ส่วนท้ายหลัง " - ") เติมเงิน/คลิก/Conv./CPC/CPA หรือ Views/CPV และผลต่าง + วันที่ในหัวตาราง (Current/Previous) ของตารางที่เติมแล้ว แถวที่ไม่มีข้อมูลสคริปต์จะแจ้ง
-**ยังไม่เติม:** LINE, TikTok, SEO, Creative, Competitor, Key Finding, รูปทุกรูป (รูปครีเอทีฟต้องวางตามอันดับในหัวข้อ 4b ของ tool)
+**เพิ่มแล้ว:** LINE Ads (Overview + หน้า Gain Friend / Conversion) และ LINE OA (เพื่อนสะสม + บรรทัด Broadcast)
+**ยังไม่เติม:** TikTok, SEO, Creative, Competitor, Key Finding, รูปทุกรูป (รูปครีเอทีฟต้องวางตามอันดับในหัวข้อ 4b ของ tool)
 
 ## ติดตั้ง (ครั้งเดียวต่อไฟล์ — ทำบนไฟล์สำเนา TEST ก่อน ห้ามทำบนไฟล์กลางจนกว่าจะทดสอบผ่าน)
 1. เปิดไฟล์สำเนาใน Google Slides → **Extensions → Apps Script**
@@ -39,3 +40,6 @@
 ```bash
 cd slides-filler && node --test test/core.test.js
 ```
+
+
+ดูการนำไปใช้กับลูกค้ารายอื่นที่ `workflows/monthly_report_new_client.md`

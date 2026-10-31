@@ -62,7 +62,8 @@ Facebook Overview 11,229.16 · Message รวม 2,078 แชต (90,278.98 บ�
 ## Step 3: สิ่งที่ระบบ "ไม่มี" — ทีมเติมเอง
 
 ```
-□ LINE Ads (Gain Friend, Link Click) และ LINE OA (เพื่อนสะสม, Broadcast open rate)
+□ LINE OA: ข้อความที่ได้รับ/ส่ง/ทักทาย/แอคทีฟแชท ดูจาก OA Manager แล้วส่งให้ tool เป็น `line_oa` (ดูข้างล่าง) · Broadcast open rate รายข้อความกรอกเอง
+  (LINE Ads และเพื่อนสะสม LINE OA ระบบเติมให้แล้ว — ตัวเลขเพื่อนจาก API อาจต่างจาก OA Manager เล็กน้อย)
 □ TikTok Ads (6-sec view, Follower)
 □ Website & SEO (GA4 / Search Console / อันดับคีย์เวิร์ด)
 □ Creative (High performing creative) และ Competitor (Fanpage Karma — API ต้องอัปเกรดแผน)
@@ -70,6 +71,16 @@ Facebook Overview 11,229.16 · Message รวม 2,078 แชต (90,278.98 บ�
 ```
 
 ---
+
+## พารามิเตอร์ `line_oa` (ไม่บังคับ)
+
+```
+line_oa: { received:{cur:2784,prev:3275}, sent:{cur:2259,prev:3052}, greeting:{cur:658,prev:843}, active_chats:{cur:1041,prev:1183} }
+```
+cur = รอบนี้, prev = รอบก่อน — ระบบคำนวณ % ให้และเติมบรรทัด Broadcast ในหน้า LINE (การ์ด "ข้อความทักทาย" ทีมแก้เอง)
+
+## ถ้า tool ตอบว่าหมดเวลา / รอ
+รอ ~1 นาทีแล้วเรียกซ้ำ **ด้วยค่าเดิมทุกตัว** จะได้ผลที่ดึงค้างไว้ทันที (เก็บ 10 นาที) — รายละเอียดใน `monthly_report_new_client.md`
 
 ## ข้อควรรู้เรื่องตัวเลข
 
