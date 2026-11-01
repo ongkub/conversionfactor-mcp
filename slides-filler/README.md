@@ -7,6 +7,9 @@
 **เพิ่มแล้ว:** LINE Ads (Overview + หน้า Gain Friend / Conversion) และ LINE OA (เพื่อนสะสม + บรรทัด Broadcast)
 **ยังไม่เติม:** TikTok, SEO, Creative, Competitor, Key Finding, รูปทุกรูป (รูปครีเอทีฟต้องวางตามอันดับในหัวข้อ 4b ของ tool)
 
+## ดึงจากระบบ (pull mode, v4)
+เมนู **ดึงข้อมูลล่าสุดจากระบบ…** ดึง JSON ของรายงานที่ข้อมูลครบจาก `https://conversion.sparkth.io/api/report-exports/` ด้วยคีย์ `cfr_` (สร้างที่หน้า รายงานรายเดือน ของแบรนด์) — ตั้งค่าคีย์ที่ **ตั้งค่าคีย์เชื่อมต่อ…** (เก็บใน Script Properties: ผู้แก้ไขสคริปต์อ่านได้) · ต้องมีสิทธิ์ `script.external_request` ใน `appsscript.json` · ครั้งแรกกดอนุญาตใหม่ · มีขั้นตรวจรอบ/เวลา/จำนวนช่องก่อนเติม · ไฟล์ใหม่: `PullDialog.html`, `SettingsDialog.html`
+
 ## ติดตั้ง (ครั้งเดียวต่อไฟล์ — ทำบนไฟล์สำเนา TEST ก่อน ห้ามทำบนไฟล์กลางจนกว่าจะทดสอบผ่าน)
 1. เปิดไฟล์สำเนาใน Google Slides → **Extensions → Apps Script**
 2. สร้างไฟล์ให้ครบ 4 ไฟล์ ก๊อปเนื้อหาจากโฟลเดอร์นี้:
