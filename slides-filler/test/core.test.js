@@ -232,3 +232,26 @@ test('table: the second header row (Current / Previous dates) is not reported as
   assert.deepStrictEqual(plan.edits.map((e) => e.row), [2]);
 });
 
+
+test('pull mode: report key format', () => {
+  assert.equal(core.isReportKey('cfr_' + 'A'.repeat(32)), true);
+  assert.equal(core.isReportKey('cfl_' + 'A'.repeat(32)), false); // Looker key is not a report key
+  assert.equal(core.isReportKey('cfr_short'), false);
+  assert.equal(core.isReportKey(''), false);
+});
+
+test('pull mode: export url never contains the key and validates inputs', () => {
+  assert.equal(core.exportUrl({}), 'https://conversion.sparkth.io/api/report-exports/latest');
+  assert.equal(core.exportUrl({ periodEnd: '2026-10-15' }), 'https://conversion.sparkth.io/api/report-exports/latest?period_end=2026-10-15');
+  assert.equal(core.exportUrl({ snapshotId: '3f2a8c1e-5b7d-4e19-9a42-0c1d2e3f4a5b' }), 'https://conversion.sparkth.io/api/report-exports/3f2a8c1e-5b7d-4e19-9a42-0c1d2e3f4a5b');
+  assert.throws(() => core.exportUrl({ periodEnd: '15/10/2026' }));
+  assert.throws(() => core.exportUrl({ snapshotId: '../../admin' }));
+});
+
+test('pull mode: status messages and payload summary', () => {
+  assert.match(core.explainExportStatus(401), /คีย์/);
+  assert.match(core.explainExportStatus(404), /ข้อมูลครบ/);
+  assert.match(core.explainExportStatus(429), /1 นาที/);
+  assert.match(core.explainExportStatus(503), /503/);
+  assert.deepEqual(core.describePayload({ period: { current: '16/09/2026 - 15/10/2026' }, generated_at: 'x', fills: [1, 2] }), { period: '16/09/2026 - 15/10/2026', generated_at: 'x', fills: 2 });
+});

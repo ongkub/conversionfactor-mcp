@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 12px; }
+    button { padding: 8px 16px; margin: 8px 8px 0 0; }
+    #out { margin-top: 12px; white-space: pre-wrap; }
+    .err { color: #b3261e; }
+    label { display: block; margin-top: 6px; }
+    input[type=text] { padding: 6px; width: 160px; }
+  </style>
+</head>
+<body>
+  <div>ดึงรายงานล่าสุดที่ <b>ข้อมูลครบ</b> จากหน้า รายงานรายเดือน ของแบรนด์ (ต้องสร้างรายงานที่หน้าเว็บก่อน)</div>
+  <label>รอบ (วันที่ 15 ที่ปิดรอบ ปี-เดือน-วัน — เว้นว่าง = ล่าสุด) <input type="text" id="period" placeholder="2026-10-15"></label>
+  <button id="check" onclick="check()">ตรวจรายงานที่จะใช้</button>
+  <div id="confirm" style="display:none">
+    <label><input type="checkbox" id="force"> ทับกล่องที่ทีมแก้ไว้ด้วย (ปกติไม่ต้องติ๊ก)</label>
+    <button id="run" onclick="run()">ยืนยัน เติมข้อมูล</button>
+  </div>
+  <div id="out"></div>
+  <script>
+    var snapshotId = '';
+    function fail(e) { document.getElementById('check').disabled = false; var o = document.getElementById('out'); o.className = 'err'; o.textContent = e.message; }
+    function check() {
+      var o = document.getElementById('out'); o.className = ''; o.textContent = 'กำลังดึง…';
+      document.getElementById('confirm').style.display = 'none';
+      document.getElementById('check').disabled = true;
+      google.script.run.withSuccessHandler(function (d) {
+        document.getElementById('check').disabled = false;
+        snapshotId = d.snapshotId;
+        o.textContent = 'พบรายงานรอบ ' + d.period + '\nสร้างเมื่อ ' + d.generated_at + '\n' + d.fills + ' ช่อง\n\nตรวจว่าตรงกับเดือนที่ต้องการแล้วกดยืนยัน';
+        document.getElementById('confirm').style.display = 'block';
+      }).withFailureHandler(fail).previewLatest(document.getElementById('period').value.trim());
+    }
+    function run() {
+      var o = document.getElementById('out'); o.className = ''; o.textContent = 'กำลังเติม…';
+      document.getElementById('run').disabled = true;
+      google.script.run.withSuccessHandler(function (r) {
+        document.getElementById('run').disabled = false;
+        var c = r.counts;
+        var t = 'ข้อมูลรอบ ' + (r.period ? r.period.current : '') + ' (ดึงเมื่อ ' + r.generated_at + ')\n' +
+          'เติมแล้ว ' + c.filled + ' · ตรงอยู่แล้ว ' + c.unchanged + ' · ข้าม (ทีมแก้) ' + c.skipped_edited + ' · ไม่พบ ' + c.not_found;
+        if (r.problems.length) t += '\n\nต้องดู:\n- ' + r.problems.join('\n- ');
+        if (r.needs_review.length) t += '\n\nทีมต้องเติมเอง:\n- ' + r.needs_review.join('\n- ');
+        o.textContent = t;
+      }).withFailureHandler(function (e) { document.getElementById('run').disabled = false; fail(e); })
+        .applyLatest(snapshotId, document.getElementById('force').checked);
+    }
+  </script>
+</body>
+</html>

@@ -247,6 +247,49 @@ function shapeMatches_(text, selector) {
   return true;
 }
 
+// ---- Pull mode: fetch the latest complete report from ConversionFactor instead of pasting JSON ----
+
+var EXPORT_BASE_URL = 'https://conversion.sparkth.io';
+
+/** Report export keys look like cfr_ + 32 base64url characters. */
+function isReportKey(key) {
+  return /^cfr_[A-Za-z0-9_-]{32}$/.test(String(key || '').trim());
+}
+
+/** /api/report-exports/latest[?period_end=] or /api/report-exports/<snapshotId>. Never puts the key in the URL. */
+function exportUrl(opts) {
+  opts = opts || {};
+  if (opts.snapshotId) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(opts.snapshotId))) throw new Error('รหัสรายงานไม่ถูกต้อง');
+    return EXPORT_BASE_URL + '/api/report-exports/' + opts.snapshotId;
+  }
+  var url = EXPORT_BASE_URL + '/api/report-exports/latest';
+  if (opts.periodEnd) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(opts.periodEnd))) throw new Error('รอบรายงานต้องเป็นรูปแบบ ปี-เดือน-วัน');
+    url += '?period_end=' + opts.periodEnd;
+  }
+  return url;
+}
+
+/** Thai message for a non-200 answer of the export endpoint. */
+function explainExportStatus(status) {
+  if (status === 401) return 'คีย์ไม่ถูกต้อง หมดอายุ หรือถูกยกเลิก — ขอคีย์ใหม่ที่หน้า รายงานรายเดือน ของแบรนด์ แล้วตั้งค่าใหม่';
+  if (status === 404) return 'ยังไม่มีรายงานที่ข้อมูลครบสำหรับรอบนี้ — ไปสร้างรายงานที่หน้าเว็บก่อน (ถ้าขึ้นว่าข้อมูลไม่ครบ ให้รอแล้วสร้างใหม่)';
+  if (status === 429) return 'เรียกถี่เกินไป รอสัก 1 นาทีแล้วลองใหม่';
+  if (status >= 500) return 'ระบบฝั่งเซิร์ฟเวอร์ขัดข้องชั่วคราว (' + status + ') ลองใหม่อีกครั้ง';
+  return 'ดึงรายงานไม่สำเร็จ (รหัส ' + status + ')';
+}
+
+/** Short, safe summary of a payload for the confirmation step. */
+function describePayload(payload) {
+  return {
+    period: payload && payload.period ? payload.period.current : '',
+    generated_at: payload ? payload.generated_at : '',
+    fills: payload && payload.fills ? payload.fills.length : 0,
+  };
+}
+
+
 if (typeof module !== 'undefined') {
-  module.exports = { buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

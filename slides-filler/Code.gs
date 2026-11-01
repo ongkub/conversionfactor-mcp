@@ -6,15 +6,80 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v3.1-fast-2026-10-27';
+var SCRIPT_VERSION = 'v4.0-pull-2026-11-01';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
 function onOpen() {
   SlidesApp.getUi()
     .createMenu('SPARK Report')
+    .addItem('ดึงข้อมูลล่าสุดจากระบบ…', 'showPullDialog')
     .addItem('เติมข้อมูลจาก JSON…', 'showFillDialog')
+    .addSeparator()
+    .addItem('ตั้งค่าคีย์เชื่อมต่อ…', 'showSettingsDialog')
     .addToUi();
+}
+
+function showPullDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('PullDialog').setWidth(620).setHeight(520);
+  SlidesApp.getUi().showModalDialog(html, 'ดึงข้อมูลรายงานล่าสุดจากระบบ');
+}
+
+function showSettingsDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('SettingsDialog').setWidth(520).setHeight(320);
+  SlidesApp.getUi().showModalDialog(html, 'ตั้งค่าคีย์เชื่อมต่อ');
+}
+
+// ---- Pull mode ----
+// The key is kept in Script Properties: every editor of this script can read it, so use it only in decks that
+// trusted colleagues edit. It is never sent back to the dialogs (only a masked form).
+var KEY_PROP = 'CF_REPORT_KEY';
+
+function getSettings() {
+  var key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
+  return { hasKey: !!key, masked: key ? key.slice(0, 8) + '••••••••' : '' };
+}
+
+function saveSettings(key) {
+  key = String(key || '').trim();
+  if (!isReportKey(key)) throw new Error('รูปแบบคีย์ไม่ถูกต้อง ต้องขึ้นต้น cfr_ และยาว 36 ตัวอักษร');
+  PropertiesService.getScriptProperties().setProperty(KEY_PROP, key);
+  return getSettings();
+}
+
+function clearSettings() {
+  PropertiesService.getScriptProperties().deleteProperty(KEY_PROP);
+  return getSettings();
+}
+
+function fetchExport_(opts) {
+  var key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
+  if (!key) throw new Error('ยังไม่ได้ตั้งค่าคีย์ — เมนู SPARK Report → ตั้งค่าคีย์เชื่อมต่อ…');
+  var res = UrlFetchApp.fetch(exportUrl(opts), {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + key },
+    muteHttpExceptions: true,
+    followRedirects: false,
+  });
+  var status = res.getResponseCode();
+  if (status !== 200) throw new Error(explainExportStatus(status));
+  var payload = JSON.parse(res.getContentText());
+  if (!payload || payload.schema !== SCHEMA) throw new Error('ข้อมูลที่ได้ไม่ใช่รูปแบบ ' + SCHEMA);
+  return { payload: payload, snapshotId: res.getHeaders()['X-Report-Snapshot-Id'] || '' };
+}
+
+/** Step 1: show which report would be used (period, time, size) before anything is written to the deck. */
+function previewLatest(periodEnd) {
+  var r = fetchExport_({ periodEnd: periodEnd || '' });
+  var d = describePayload(r.payload);
+  d.snapshotId = r.snapshotId;
+  return d;
+}
+
+/** Step 2: fetch that exact snapshot again and fill the deck. */
+function applyLatest(snapshotId, force) {
+  var r = fetchExport_({ snapshotId: snapshotId });
+  return applyPayloadObject_(r.payload, force);
 }
 
 function showFillDialog() {
@@ -257,6 +322,10 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
 function applyPayload(jsonText, force) {
   var payload = JSON.parse(jsonText);
   if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
+  return applyPayloadObject_(payload, force);
+}
+
+function applyPayloadObject_(payload, force) {
 
   // Remembered values: read once, collect writes, save once at the end (hundreds of single calls made the run very slow)
   var docProps = PropertiesService.getDocumentProperties();
