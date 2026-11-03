@@ -232,3 +232,120 @@ test('table: the second header row (Current / Previous dates) is not reported as
   assert.deepStrictEqual(plan.edits.map((e) => e.row), [2]);
 });
 
+
+test('pull mode: report key format', () => {
+  assert.equal(core.isReportKey('cfr_' + 'A'.repeat(32)), true);
+  assert.equal(core.isReportKey('cfl_' + 'A'.repeat(32)), false); // Looker key is not a report key
+  assert.equal(core.isReportKey('cfr_short'), false);
+  assert.equal(core.isReportKey(''), false);
+});
+
+test('pull mode: export url never contains the key and validates inputs', () => {
+  assert.equal(core.exportUrl({}), 'https://conversion.sparkth.io/api/report-exports/latest');
+  assert.equal(core.exportUrl({ periodEnd: '2026-10-15' }), 'https://conversion.sparkth.io/api/report-exports/latest?period_end=2026-10-15');
+  assert.equal(core.exportUrl({ snapshotId: '3f2a8c1e-5b7d-4e19-9a42-0c1d2e3f4a5b' }), 'https://conversion.sparkth.io/api/report-exports/3f2a8c1e-5b7d-4e19-9a42-0c1d2e3f4a5b');
+  assert.throws(() => core.exportUrl({ periodEnd: '15/10/2026' }));
+  assert.throws(() => core.exportUrl({ snapshotId: '../../admin' }));
+});
+
+test('pull mode: status messages and payload summary', () => {
+  assert.match(core.explainExportStatus(401), /คีย์/);
+  assert.match(core.explainExportStatus(404), /ข้อมูลครบ/);
+  assert.match(core.explainExportStatus(429), /1 นาที/);
+  assert.match(core.explainExportStatus(503), /503/);
+  assert.deepEqual(core.describePayload({ period: { current: '16/09/2026 - 15/10/2026' }, generated_at: 'x', fills: [1, 2] }), { period: '16/09/2026 - 15/10/2026', generated_at: 'x', fills: 2 });
+});
+
+test('table matching: Meta ad-set names vs the labels the team typed (Engagement VDO slide)', () => {
+  const cell = (label) => [label, '', '', '', ''];
+  const cells = [
+    ['Ads Target', 'Result', 'CPA', 'Budget', 'MoM (Budget)'],
+    cell('1. Retargeting + 1% lookalike'),
+    cell('2. Retargeting ลอนผนัง, ST850PN+1%lookalike '),
+    cell('3. 2% lookalike Sangthai Page Retargeting'),
+    cell('4. Construction '),
+  ];
+  const name = (n) => ({ name: n, key: n.replace(/[\s\-–. ]/g, ''), cells: { '1': n } });
+  const plan = core.planTableEdits(cells, { candidates: [
+    name('1_Sangthai Page Retargeting + 1%Lookalike'),
+    name('2_Retargetingลอนผนัง +ST850+ 1%Lookalike'),
+    name('3_2% lookalike Sangthai Page Retargeting'),
+    name('5_Construction 05/2026 (min500.-/m. 28/09)'),
+  ] });
+  assert.deepEqual(plan.unmatchedRows, []);
+  assert.deepEqual(plan.unusedCandidates, []);
+  const filled = plan.edits.map((e) => [e.row, e.newText]);
+  assert.deepEqual(filled, [
+    [1, '1_Sangthai Page Retargeting + 1%Lookalike'],
+    [2, '2_Retargetingลอนผนัง +ST850+ 1%Lookalike'],
+    [3, '3_2% lookalike Sangthai Page Retargeting'],
+    [4, '5_Construction 05/2026 (min500.-/m. 28/09)'],
+  ]);
+});
+
+test('table matching: does not pair unrelated names', () => {
+  const cells = [['Ads Target', 'Result'], ['1. Core Audience', ''], ['2. Construction', '']];
+  const plan = core.planTableEdits(cells, { candidates: [
+    { name: 'Business Owner', key: 'BusinessOwner', cells: { '1': 'x' } },
+    { name: 'CA+LAL', key: 'CA+LAL', cells: { '1': 'y' } },
+  ] });
+  assert.equal(plan.edits.length, 0);
+  assert.equal(plan.unmatchedRows.length, 2);
+});
+
+test('dice similarity', () => {
+  assert.equal(core.diceBigrams('abc', 'abc'), 1);
+  assert.ok(core.diceBigrams('retargetingลอนผนัง,st850pn+1%lookalike', 'retargetingลอนผนัง+st850+1%lookalike') > 0.8);
+  assert.ok(core.diceBigrams('coreaudience', 'businessowner') < 0.3);
+});
+
+test('charts: picks the picture under the label, prefers a tagged one, ignores other charts', () => {
+  // geometry of the Engagement VDO slide (points): two chart pictures stacked at the left, creatives at the far right
+  const engLabel = { left: 70, top: 252, width: 110, height: 22 };
+  const reachLabel = { left: 70, top: 449, width: 60, height: 22 };
+  const imgEng = { left: 66, top: 275, width: 460, height: 125, title: '' };
+  const imgReach = { left: 66, top: 472, width: 460, height: 170, title: '' };
+  const creative = { left: 670, top: 400, width: 125, height: 200, title: '' };
+  const logo = { left: 40, top: 20, width: 60, height: 60, title: '' };
+  const all = [creative, logo, imgReach, imgEng];
+  assert.equal(core.pickChartImage_(engLabel, all, 'spark:chart:e'), imgEng);
+  assert.equal(core.pickChartImage_(reachLabel, all, 'spark:chart:r'), imgReach);
+  // next month: tagged pictures are found by tag even if moved, and are not stolen by the other label
+  const taggedEng = { left: 300, top: 600, width: 460, height: 125, title: 'spark:chart:e' };
+  assert.equal(core.pickChartImage_(engLabel, [creative, taggedEng, imgReach], 'spark:chart:e'), taggedEng);
+  assert.equal(core.pickChartImage_(reachLabel, [creative, imgReach, taggedEng], 'spark:chart:r'), imgReach);
+  assert.equal(core.pickChartImage_(engLabel, [creative, logo], 'spark:chart:e'), null);
+});
+
+test('charts: pixel size keeps the aspect and caps the width', () => {
+  assert.deepEqual(core.chartPixelSize(300, 100), { width: 900, height: 300 });
+  const big = core.chartPixelSize(600, 200);
+  assert.equal(big.width, 1200);
+  assert.equal(big.height, 400);
+});
+
+test('creative pictures: the picture above each rank box, tagged ones first, charts and logos ignored', () => {
+  // slide 36 geometry (points): rank boxes under three portrait pictures (2 | 1 | 3), charts at the left
+  const box2 = { left: 668, top: 605, width: 125, height: 60 };
+  const box1 = { left: 793, top: 592, width: 125, height: 56 };
+  const box3 = { left: 922, top: 605, width: 125, height: 60 };
+  const pic2 = { left: 668, top: 402, width: 125, height: 203, title: '' };
+  const pic1 = { left: 793, top: 363, width: 125, height: 229, title: '' };
+  const pic3 = { left: 922, top: 407, width: 125, height: 198, title: '' };
+  const chart = { left: 66, top: 275, width: 460, height: 125, title: 'spark:chart:main.x' };
+  const logo = { left: 40, top: 20, width: 60, height: 60, title: '' };
+  const all = [chart, logo, pic3, pic1, pic2];
+  assert.equal(core.pickCreativeImage_(box1, all, 'spark:creative:1'), pic1);
+  assert.equal(core.pickCreativeImage_(box2, all, 'spark:creative:2'), pic2);
+  assert.equal(core.pickCreativeImage_(box3, all, 'spark:creative:3'), pic3);
+  const tagged = { left: 700, top: 300, width: 125, height: 200, title: 'spark:creative:2' };
+  assert.equal(core.pickCreativeImage_(box2, [pic2, tagged], 'spark:creative:2'), tagged);
+  assert.equal(core.pickCreativeImage_(box2, [pic1, tagged], 'spark:creative:3'), null); // 1's picture is not above box 2 and the tag is another
+  assert.equal(core.pickCreativeImage_(box1, [{ left: 793, top: 100, width: 125, height: 50, title: '' }], 'x'), null);
+});
+
+test('headerValue_ finds a header whatever its case', () => {
+  assert.equal(core.headerValue_({ 'x-report-snapshot-id': 'abc' }, 'X-Report-Snapshot-Id'), 'abc');
+  assert.equal(core.headerValue_({ 'X-Report-Snapshot-Id': 'abc' }, 'x-report-snapshot-id'), 'abc');
+  assert.equal(core.headerValue_({ 'Content-Type': 'x' }, 'X-Report-Snapshot-Id'), '');
+});

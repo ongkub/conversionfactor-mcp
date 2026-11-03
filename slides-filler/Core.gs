@@ -99,15 +99,34 @@ function planShapeEdits(text, op) {
  *   3. same last segment after " - " (team label "GDN-Sangthai - Custom intent 70%" vs "GDN-Tier 1&2 - Custom intent 70%")
  * Returns { edits: [{row, col, oldText, newText}], unmatchedRows: [label], unusedCandidates: [name] }.
  */
+/** Sørensen–Dice similarity of two strings by character bigrams (0..1). */
+function diceBigrams(a, b) {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  var grams = {};
+  var total = 0;
+  for (var i = 0; i < a.length - 1; i++) { var g = a.substr(i, 2); grams[g] = (grams[g] || 0) + 1; total++; }
+  var hits = 0;
+  for (var j = 0; j < b.length - 1; j++) {
+    var h = b.substr(j, 2);
+    if (grams[h] > 0) { grams[h]--; hits++; }
+  }
+  return (2 * hits) / (total + (b.length - 1));
+}
+
 function planTableEdits(cells, op) {
   var low = function (v) { return normKey(v).toLowerCase(); };
   var lastSegment = function (v) {
     var parts = String(v).split(/[ \t\u00a0]-[ \t\u00a0]/);
     return parts.length > 1 ? low(parts[parts.length - 1]) : null;
   };
+  // Meta ad-set names start with a counter ("1_Sangthai Page …", "5_Construction …") that the team's labels drop
+  var dropCounter = function (k) { return k.replace(/^\d+[._)]/, ''); };
   var cands = op.candidates.map(function (c) {
     var keys = [String(c.key).toLowerCase()];
     (c.aliases || []).forEach(function (a) { keys.push(low(a)); });
+    var withoutCounter = keys.map(dropCounter);
+    withoutCounter.forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
     return { keys: keys, last: lastSegment(c.name), c: c };
   });
 
@@ -128,6 +147,10 @@ function planTableEdits(cells, op) {
       return cd.keys.some(function (k) { return k.indexOf(row.key) === 0 || (k.length >= 3 && row.key.indexOf(k) === 0); });
     },
     function (row, cd) { return !!row.last && !!cd.last && row.last === cd.last; },
+    // the team shortened the ad-set name ("Retargeting + 1% lookalike" inside "Sangthai Page Retargeting + 1%Lookalike")
+    function (row, cd) {
+      return row.key.length >= 8 && cd.keys.some(function (k) { return k.length >= 8 && (k.indexOf(row.key) >= 0 || row.key.indexOf(k) >= 0); });
+    },
   ];
   passes.forEach(function (test) {
     rows.forEach(function (row) {
@@ -139,6 +162,21 @@ function planTableEdits(cells, op) {
         return;
       }
     });
+  });
+
+  // last resort: near-identical names (comma vs plus, "ST850PN" vs "ST850") — best unused candidate above a high similarity
+  rows.forEach(function (row) {
+    if (row.cand >= 0 || row.key.length < 8) return;
+    var best = -1;
+    var bestScore = 0.8;
+    for (var i = 0; i < cands.length; i++) {
+      if (used[i]) continue;
+      for (var k = 0; k < cands[i].keys.length; k++) {
+        var score = diceBigrams(row.key, cands[i].keys[k]);
+        if (score >= bestScore) { bestScore = score; best = i; }
+      }
+    }
+    if (best >= 0) { row.cand = best; used[best] = true; }
   });
 
   var edits = [];
@@ -247,6 +285,118 @@ function shapeMatches_(text, selector) {
   return true;
 }
 
+
+// ---- Charts: replace the picture the team pasted under an "Engagement" / "Reach" label ----
+
+/** Header lookup that ignores case (Apps Script returns the names as the server sent them). */
+function headerValue_(headers, name) {
+  var want = String(name).toLowerCase();
+  for (var k in headers) if (Object.prototype.hasOwnProperty.call(headers, k) && String(k).toLowerCase() === want) return headers[k];
+  return '';
+}
+
+var CHART_TAG_PREFIX = 'spark:chart:';
+
+/**
+ * Which picture does this chart replace? 1) a picture this script tagged earlier, 2) otherwise the nearest wide
+ * picture below the label that starts at the label's left edge. Boxes are {left, top, width, height}; images also
+ * carry {title, ref}. Returns the image or null.
+ */
+function pickChartImage_(label, images, tag) {
+  var i;
+  for (i = 0; i < images.length; i++) if (images[i].title === tag) return images[i];
+  var best = null;
+  for (i = 0; i < images.length; i++) {
+    var im = images[i];
+    if (String(im.title || '').indexOf(CHART_TAG_PREFIX) === 0) continue; // another chart's picture
+    var below = im.top >= label.top - 4;
+    var startsAtLabel = im.left <= label.left + 40 && im.left + im.width >= label.left + 20;
+    var wide = im.height > 0 && im.width / im.height >= 1.3;
+    if (!below || !startsAtLabel || !wide) continue;
+    if (!best || im.top < best.top) best = im;
+  }
+  return best;
+}
+
+/** Pixel size for the chart image: 3x the picture's size in points (crisp), capped at 1200 px wide, same aspect. */
+function chartPixelSize(widthPt, heightPt) {
+  var scale = 3;
+  if (widthPt * scale > 1200) scale = 1200 / widthPt;
+  return { width: Math.max(200, Math.round(widthPt * scale)), height: Math.max(100, Math.round(heightPt * scale)) };
+}
+
+
+// ---- Creative pictures: the picture sitting directly above a rank box ("1 Engagement = …") ----
+
+var CREATIVE_TAG_PREFIX = 'spark:creative:';
+
+/**
+ * Which picture belongs to this rank box? 1) one this script tagged earlier, 2) otherwise the portrait-ish picture
+ * whose bottom edge is within 40 pt of the box top and that overlaps it horizontally (>= 60%). Chart pictures and wide
+ * pictures are ignored. Boxes are {left, top, width, height}; images also carry {title}. Returns the image or null.
+ */
+function pickCreativeImage_(box, images, tag) {
+  var i;
+  for (i = 0; i < images.length; i++) if (images[i].title === tag) return images[i];
+  var best = null;
+  var bestGap = 1e9;
+  for (i = 0; i < images.length; i++) {
+    var im = images[i];
+    var title = String(im.title || '');
+    if (title.indexOf(CHART_TAG_PREFIX) === 0 || title.indexOf(CREATIVE_TAG_PREFIX) === 0) continue;
+    if (!(im.height > 0) || im.width / im.height > 1.6) continue;
+    var overlap = Math.min(im.left + im.width, box.left + box.width) - Math.max(im.left, box.left);
+    if (overlap < 0.6 * Math.min(im.width, box.width)) continue;
+    var gap = Math.abs(im.top + im.height - box.top);
+    if (gap > 40) continue;
+    if (gap < bestGap) { best = im; bestGap = gap; }
+  }
+  return best;
+}
+
+// ---- Pull mode: fetch the latest complete report from ConversionFactor instead of pasting JSON ----
+
+var EXPORT_BASE_URL = 'https://conversion.sparkth.io';
+
+/** Report export keys look like cfr_ + 32 base64url characters. */
+function isReportKey(key) {
+  return /^cfr_[A-Za-z0-9_-]{32}$/.test(String(key || '').trim());
+}
+
+/** /api/report-exports/latest[?period_end=] or /api/report-exports/<snapshotId>. Never puts the key in the URL. */
+function exportUrl(opts) {
+  opts = opts || {};
+  if (opts.snapshotId) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(opts.snapshotId))) throw new Error('รหัสรายงานไม่ถูกต้อง');
+    return EXPORT_BASE_URL + '/api/report-exports/' + opts.snapshotId;
+  }
+  var url = EXPORT_BASE_URL + '/api/report-exports/latest';
+  if (opts.periodEnd) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(opts.periodEnd))) throw new Error('รอบรายงานต้องเป็นรูปแบบ ปี-เดือน-วัน');
+    url += '?period_end=' + opts.periodEnd;
+  }
+  return url;
+}
+
+/** Thai message for a non-200 answer of the export endpoint. */
+function explainExportStatus(status) {
+  if (status === 401) return 'คีย์ไม่ถูกต้อง หมดอายุ หรือถูกยกเลิก — ขอคีย์ใหม่ที่หน้า รายงานรายเดือน ของแบรนด์ แล้วตั้งค่าใหม่';
+  if (status === 404) return 'ยังไม่มีรายงานที่ข้อมูลครบสำหรับรอบนี้ — ไปสร้างรายงานที่หน้าเว็บก่อน (ถ้าขึ้นว่าข้อมูลไม่ครบ ให้รอแล้วสร้างใหม่)';
+  if (status === 429) return 'เรียกถี่เกินไป รอสัก 1 นาทีแล้วลองใหม่';
+  if (status >= 500) return 'ระบบฝั่งเซิร์ฟเวอร์ขัดข้องชั่วคราว (' + status + ') ลองใหม่อีกครั้ง';
+  return 'ดึงรายงานไม่สำเร็จ (รหัส ' + status + ')';
+}
+
+/** Short, safe summary of a payload for the confirmation step. */
+function describePayload(payload) {
+  return {
+    period: payload && payload.period ? payload.period.current : '',
+    generated_at: payload ? payload.generated_at : '',
+    fills: payload && payload.fills ? payload.fills.length : 0,
+  };
+}
+
+
 if (typeof module !== 'undefined') {
-  module.exports = { buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

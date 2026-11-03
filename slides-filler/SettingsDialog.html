@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 12px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; font-family: monospace; }
+    button { padding: 8px 16px; margin: 8px 8px 0 0; }
+    #out { margin-top: 12px; white-space: pre-wrap; }
+    .err { color: #b3261e; }
+    .note { color: #555; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div>วางคีย์ที่ขึ้นต้น <code>cfr_</code> จากหน้า <b>รายงานรายเดือน → คีย์ดึงรายงาน</b> ของแบรนด์ (เว็บ ConversionFactor)</div>
+  <div id="state" class="note">กำลังตรวจ…</div>
+  <input id="key" type="password" autocomplete="off" placeholder="cfr_…">
+  <button onclick="save()">บันทึกคีย์</button><button onclick="clearKey()">ลบคีย์</button>
+  <div class="note">คีย์เก็บใน Script Properties ของไฟล์นี้ — ผู้แก้ไขสคริปต์ทุกคนอ่านได้ ใช้เฉพาะไฟล์ที่ทีมที่ไว้ใจแก้ไข คีย์อ่านรายงานของแบรนด์เดียว หมดอายุใน 90 วัน</div>
+  <div id="out"></div>
+  <script>
+    function show(s) { document.getElementById('state').textContent = s.hasKey ? 'ตั้งค่าแล้ว: ' + s.masked : 'ยังไม่ได้ตั้งค่าคีย์'; }
+    function fail(e) { var o = document.getElementById('out'); o.className = 'err'; o.textContent = e.message; }
+    function save() {
+      var o = document.getElementById('out'); o.className = ''; o.textContent = '';
+      google.script.run.withSuccessHandler(function (s) { document.getElementById('key').value = ''; show(s); o.textContent = 'บันทึกแล้ว'; })
+        .withFailureHandler(fail).saveSettings(document.getElementById('key').value);
+    }
+    function clearKey() { google.script.run.withSuccessHandler(show).withFailureHandler(fail).clearSettings(); }
+    google.script.run.withSuccessHandler(show).withFailureHandler(fail).getSettings();
+  </script>
+</body>
+</html>

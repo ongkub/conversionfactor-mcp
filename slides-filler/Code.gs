@@ -6,15 +6,82 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v3.1-fast-2026-10-27';
+var SCRIPT_VERSION = 'v4.3-pull-snapshot-2026-11-03';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
 function onOpen() {
   SlidesApp.getUi()
     .createMenu('SPARK Report')
+    .addItem('ดึงข้อมูลล่าสุดจากระบบ…', 'showPullDialog')
     .addItem('เติมข้อมูลจาก JSON…', 'showFillDialog')
+    .addSeparator()
+    .addItem('ตั้งค่าคีย์เชื่อมต่อ…', 'showSettingsDialog')
     .addToUi();
+}
+
+function showPullDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('PullDialog').setWidth(620).setHeight(520);
+  SlidesApp.getUi().showModalDialog(html, 'ดึงข้อมูลรายงานล่าสุดจากระบบ');
+}
+
+function showSettingsDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('SettingsDialog').setWidth(520).setHeight(320);
+  SlidesApp.getUi().showModalDialog(html, 'ตั้งค่าคีย์เชื่อมต่อ');
+}
+
+// ---- Pull mode ----
+// The key is kept in Script Properties: every editor of this script can read it, so use it only in decks that
+// trusted colleagues edit. It is never sent back to the dialogs (only a masked form).
+var KEY_PROP = 'CF_REPORT_KEY';
+
+function getSettings() {
+  var key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
+  return { hasKey: !!key, masked: key ? key.slice(0, 8) + '••••••••' : '' };
+}
+
+function saveSettings(key) {
+  key = String(key || '').trim();
+  if (!isReportKey(key)) throw new Error('รูปแบบคีย์ไม่ถูกต้อง ต้องขึ้นต้น cfr_ และยาว 36 ตัวอักษร');
+  PropertiesService.getScriptProperties().setProperty(KEY_PROP, key);
+  return getSettings();
+}
+
+function clearSettings() {
+  PropertiesService.getScriptProperties().deleteProperty(KEY_PROP);
+  return getSettings();
+}
+
+function fetchExport_(opts) {
+  var key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
+  if (!key) throw new Error('ยังไม่ได้ตั้งค่าคีย์ — เมนู SPARK Report → ตั้งค่าคีย์เชื่อมต่อ…');
+  var res = UrlFetchApp.fetch(exportUrl(opts), {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + key },
+    muteHttpExceptions: true,
+    followRedirects: false,
+  });
+  var status = res.getResponseCode();
+  if (status !== 200) throw new Error(explainExportStatus(status));
+  var payload = JSON.parse(res.getContentText());
+  if (!payload || payload.schema !== SCHEMA) throw new Error('ข้อมูลที่ได้ไม่ใช่รูปแบบ ' + SCHEMA);
+  return { payload: payload, snapshotId: headerValue_(res.getHeaders(), 'X-Report-Snapshot-Id') };
+}
+
+/** Step 1: show which report would be used (period, time, size) before anything is written to the deck. */
+function previewLatest(periodEnd) {
+  var r = fetchExport_({ periodEnd: periodEnd || '' });
+  var d = describePayload(r.payload);
+  d.snapshotId = r.snapshotId;
+  return d;
+}
+
+/** Step 2: fetch that exact snapshot again and fill the deck. */
+function applyLatest(snapshotId, force, withCharts, withImages) {
+  // never fall back to "latest": that could fill a different period than the one the person checked
+  if (!snapshotId) throw new Error('ไม่ได้รหัสรายงานจากขั้นตอนตรวจ — กดตรวจรายงานที่จะใช้อีกครั้งก่อนยืนยัน');
+  var r = fetchExport_({ snapshotId: snapshotId });
+  return applyPayloadObject_(r.payload, force, withCharts, withImages);
 }
 
 function showFillDialog() {
@@ -58,6 +125,23 @@ function collectShapes_(elements, pageW, pageH, out) {
   }
 }
 
+function collectImages_(elements, pageW, pageH, out) {
+  for (var i = 0; i < elements.length; i++) {
+    var el = elements[i];
+    var type = el.getPageElementType();
+    if (type === SlidesApp.PageElementType.GROUP) {
+      collectImages_(el.asGroup().getChildren(), pageW, pageH, out);
+    } else if (type === SlidesApp.PageElementType.IMAGE) {
+      var left = el.getLeft();
+      var top = el.getTop();
+      var width = el.getWidth();
+      var height = el.getHeight();
+      var outside = isFinite(left) && isFinite(top) && (left >= pageW || left + width <= 0 || top >= pageH || top + height <= 0);
+      if (!outside) out.push({ el: el, left: left, top: top, width: width, height: height });
+    }
+  }
+}
+
 function buildIndex_() {
   var pres = SlidesApp.getActivePresentation();
   var w = pres.getPageWidth();
@@ -67,9 +151,11 @@ function buildIndex_() {
     collectShapes_(slide.getPageElements(), w, h, shapes);
     var tables = [];
     collectTables_(slide.getPageElements(), w, h, tables);
+    var images = [];
+    collectImages_(slide.getPageElements(), w, h, images);
     // Read every text once: finding a slide for each of ~200 ops would otherwise re-read the whole deck each time
     var texts = shapes.map(function (sh) { try { return sh.getText().asString(); } catch (e) { return ''; } });
-    return { number: i + 1, shapes: shapes, texts: texts, tables: tables };
+    return { number: i + 1, shapes: shapes, texts: texts, tables: tables, images: images };
   });
 }
 
@@ -254,9 +340,90 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
   return touched;
 }
 
-function applyPayload(jsonText, force) {
+/** Draw the column chart (Charts service) as a PNG blob of the given pixel size. */
+function drawChartBlob_(op, width, height) {
+  // the picture is shown at ~1/3 of its pixel size, so text sizes scale with the width to read like ~9 pt on the slide
+  var font = Math.max(11, Math.round(width / 46));
+  var data = Charts.newDataTable().addColumn(Charts.ColumnType.STRING, 'Age');
+  op.series.forEach(function (s) { data.addColumn(Charts.ColumnType.NUMBER, s.name); });
+  op.categories.forEach(function (c, i) {
+    var row = [c];
+    op.series.forEach(function (s) { row.push(s.values[i] || 0); });
+    data.addRow(row);
+  });
+  var chart = Charts.newColumnChart()
+    .setDataTable(data.build())
+    .setColors(op.series.map(function (s) { return s.color; }))
+    .setDimensions(width, height)
+    // setOption replaces the whole 'legend' object, so the position must be part of it
+    .setOption('legend', { position: 'bottom', maxLines: 2, textStyle: { fontSize: Math.max(10, Math.round(width / 54)) } })
+    .setOption('hAxis', { textStyle: { fontSize: font } })
+    .setOption('vAxis', { format: 'short', textStyle: { fontSize: font }, minValue: 0 })
+    .setOption('bar', { groupWidth: '70%' })
+    .build();
+  return chart.getAs('image/png');
+}
+
+/** Replace the team's picture under the op's label with a freshly drawn chart; tag it so next month finds it. */
+function applyChartOp_(op, slide, counts, problems) {
+  var label = null;
+  for (var i = 0; i < slide.shapes.length && !label; i++) {
+    if (String(slide.texts[i]).replace(/^\s+|\s+$/g, '').toLowerCase() === op.slot.toLowerCase()) label = slide.shapes[i];
+  }
+  if (!label) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบหัวข้อ "' + op.slot + '"'); return; }
+  var box = { left: label.getLeft(), top: label.getTop(), width: label.getWidth(), height: label.getHeight() };
+  var tag = CHART_TAG_PREFIX + op.id;
+  var images = slide.images.map(function (im) {
+    var title = '';
+    try { title = im.el.getTitle() || ''; } catch (e) {}
+    return { el: im.el, left: im.left, top: im.top, width: im.width, height: im.height, title: title };
+  });
+  var target = pickChartImage_(box, images, tag);
+  if (!target) { counts.not_found++; problems.push(op.id + ': พบหัวข้อ "' + op.slot + '" หน้า ' + slide.number + ' แต่ไม่พบรูปกราฟใต้หัวข้อ'); return; }
+  var size = chartPixelSize(target.width, target.height);
+  var image = target.el.asImage();
+  image.replace(drawChartBlob_(op, size.width, size.height), false);
+  image.setTitle(tag);
+  counts.filled++;
+  counts.charts++;
+}
+
+/** Replace the picture above a creative's rank box with the ad's picture; tag it so next month finds it. */
+function applyImageOp_(op, slide, counts, problems) {
+  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page Like)\\s*=');
+  var boxShape = null;
+  for (var i = 0; i < slide.shapes.length && !boxShape; i++) if (re.test(slide.texts[i])) boxShape = slide.shapes[i];
+  if (!boxShape) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่องอันดับ ' + op.rank); return; }
+  var box = { left: boxShape.getLeft(), top: boxShape.getTop(), width: boxShape.getWidth(), height: boxShape.getHeight() };
+  var tag = CREATIVE_TAG_PREFIX + op.id;
+  var images = slide.images.map(function (im) {
+    var title = '';
+    try { title = im.el.getTitle() || ''; } catch (e) {}
+    return { el: im.el, left: im.left, top: im.top, width: im.width, height: im.height, title: title };
+  });
+  var target = pickCreativeImage_(box, images, tag);
+  if (!target) { counts.not_found++; problems.push(op.id + ': พบกล่องอันดับ ' + op.rank + ' หน้า ' + slide.number + ' แต่ไม่พบรูปเหนือกล่อง'); return; }
+  // Meta's links expire: a failed download only skips this picture (the old one stays)
+  var res = UrlFetchApp.fetch(op.url, { muteHttpExceptions: true, followRedirects: true });
+  if (res.getResponseCode() !== 200) {
+    counts.images_failed++;
+    problems.push(op.id + ': โหลดรูปไม่ได้ (รหัส ' + res.getResponseCode() + ' — ลิงก์อาจหมดอายุ สร้างรายงานใหม่แล้วเติมทันที) คงรูปเดิมไว้');
+    return;
+  }
+  var image = target.el.asImage();
+  image.replace(res.getBlob(), true);
+  image.setTitle(tag);
+  counts.filled++;
+  counts.images++;
+}
+
+function applyPayload(jsonText, force, withCharts, withImages) {
   var payload = JSON.parse(jsonText);
   if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
+  return applyPayloadObject_(payload, force, withCharts, withImages);
+}
+
+function applyPayloadObject_(payload, force, withCharts, withImages) {
 
   // Remembered values: read once, collect writes, save once at the end (hundreds of single calls made the run very slow)
   var docProps = PropertiesService.getDocumentProperties();
@@ -271,7 +438,7 @@ function applyPayload(jsonText, force) {
   };
   var slideCache = {};
   var index = buildIndex_();
-  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0 };
+  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0, charts: 0, charts_skipped: 0, images: 0, images_skipped: 0, images_failed: 0 };
   var problems = [];
   var debugShown = false;
 
@@ -297,6 +464,20 @@ function applyPayload(jsonText, force) {
         debugShown = true;
         problems.push('  debug (' + op.id + '): ' + (debugTitle_(op.slide).join(' ; ') || 'ไม่พบกล่องที่มีคำว่า Campaign + ชื่อสาขานี้เลย'));
       }
+      continue;
+    }
+
+    if (op.kind === 'image') {
+      if (!withImages) { counts.images_skipped++; continue; }
+      try { applyImageOp_(op, slide, counts, problems); }
+      catch (e) { counts.images_failed++; problems.push(op.id + ': ใส่รูปไม่สำเร็จ — ' + e.message); }
+      continue;
+    }
+
+    if (op.kind === 'chart') {
+      if (!withCharts) { counts.charts_skipped++; continue; }
+      try { applyChartOp_(op, slide, counts, problems); }
+      catch (e) { counts.not_found++; problems.push(op.id + ': วาดกราฟไม่สำเร็จ — ' + e.message); }
       continue;
     }
 
