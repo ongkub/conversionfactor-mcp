@@ -323,3 +323,23 @@ test('charts: pixel size keeps the aspect and caps the width', () => {
   assert.equal(big.width, 1200);
   assert.equal(big.height, 400);
 });
+
+test('creative pictures: the picture above each rank box, tagged ones first, charts and logos ignored', () => {
+  // slide 36 geometry (points): rank boxes under three portrait pictures (2 | 1 | 3), charts at the left
+  const box2 = { left: 668, top: 605, width: 125, height: 60 };
+  const box1 = { left: 793, top: 592, width: 125, height: 56 };
+  const box3 = { left: 922, top: 605, width: 125, height: 60 };
+  const pic2 = { left: 668, top: 402, width: 125, height: 203, title: '' };
+  const pic1 = { left: 793, top: 363, width: 125, height: 229, title: '' };
+  const pic3 = { left: 922, top: 407, width: 125, height: 198, title: '' };
+  const chart = { left: 66, top: 275, width: 460, height: 125, title: 'spark:chart:main.x' };
+  const logo = { left: 40, top: 20, width: 60, height: 60, title: '' };
+  const all = [chart, logo, pic3, pic1, pic2];
+  assert.equal(core.pickCreativeImage_(box1, all, 'spark:creative:1'), pic1);
+  assert.equal(core.pickCreativeImage_(box2, all, 'spark:creative:2'), pic2);
+  assert.equal(core.pickCreativeImage_(box3, all, 'spark:creative:3'), pic3);
+  const tagged = { left: 700, top: 300, width: 125, height: 200, title: 'spark:creative:2' };
+  assert.equal(core.pickCreativeImage_(box2, [pic2, tagged], 'spark:creative:2'), tagged);
+  assert.equal(core.pickCreativeImage_(box2, [pic1, tagged], 'spark:creative:3'), null); // 1's picture is not above box 2 and the tag is another
+  assert.equal(core.pickCreativeImage_(box1, [{ left: 793, top: 100, width: 125, height: 50, title: '' }], 'x'), null);
+});

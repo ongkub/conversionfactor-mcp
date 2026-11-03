@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.1-charts-2026-11-03';
+var SCRIPT_VERSION = 'v4.2-images-2026-11-03';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -77,9 +77,9 @@ function previewLatest(periodEnd) {
 }
 
 /** Step 2: fetch that exact snapshot again and fill the deck. */
-function applyLatest(snapshotId, force, withCharts) {
+function applyLatest(snapshotId, force, withCharts, withImages) {
   var r = fetchExport_({ snapshotId: snapshotId });
-  return applyPayloadObject_(r.payload, force, withCharts);
+  return applyPayloadObject_(r.payload, force, withCharts, withImages);
 }
 
 function showFillDialog() {
@@ -386,13 +386,42 @@ function applyChartOp_(op, slide, counts, problems) {
   counts.charts++;
 }
 
-function applyPayload(jsonText, force, withCharts) {
-  var payload = JSON.parse(jsonText);
-  if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
-  return applyPayloadObject_(payload, force, withCharts);
+/** Replace the picture above a creative's rank box with the ad's picture; tag it so next month finds it. */
+function applyImageOp_(op, slide, counts, problems) {
+  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page Like)\\s*=');
+  var boxShape = null;
+  for (var i = 0; i < slide.shapes.length && !boxShape; i++) if (re.test(slide.texts[i])) boxShape = slide.shapes[i];
+  if (!boxShape) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่องอันดับ ' + op.rank); return; }
+  var box = { left: boxShape.getLeft(), top: boxShape.getTop(), width: boxShape.getWidth(), height: boxShape.getHeight() };
+  var tag = CREATIVE_TAG_PREFIX + op.id;
+  var images = slide.images.map(function (im) {
+    var title = '';
+    try { title = im.el.getTitle() || ''; } catch (e) {}
+    return { el: im.el, left: im.left, top: im.top, width: im.width, height: im.height, title: title };
+  });
+  var target = pickCreativeImage_(box, images, tag);
+  if (!target) { counts.not_found++; problems.push(op.id + ': พบกล่องอันดับ ' + op.rank + ' หน้า ' + slide.number + ' แต่ไม่พบรูปเหนือกล่อง'); return; }
+  // Meta's links expire: a failed download only skips this picture (the old one stays)
+  var res = UrlFetchApp.fetch(op.url, { muteHttpExceptions: true, followRedirects: true });
+  if (res.getResponseCode() !== 200) {
+    counts.images_failed++;
+    problems.push(op.id + ': โหลดรูปไม่ได้ (รหัส ' + res.getResponseCode() + ' — ลิงก์อาจหมดอายุ สร้างรายงานใหม่แล้วเติมทันที) คงรูปเดิมไว้');
+    return;
+  }
+  var image = target.el.asImage();
+  image.replace(res.getBlob(), true);
+  image.setTitle(tag);
+  counts.filled++;
+  counts.images++;
 }
 
-function applyPayloadObject_(payload, force, withCharts) {
+function applyPayload(jsonText, force, withCharts, withImages) {
+  var payload = JSON.parse(jsonText);
+  if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
+  return applyPayloadObject_(payload, force, withCharts, withImages);
+}
+
+function applyPayloadObject_(payload, force, withCharts, withImages) {
 
   // Remembered values: read once, collect writes, save once at the end (hundreds of single calls made the run very slow)
   var docProps = PropertiesService.getDocumentProperties();
@@ -407,7 +436,7 @@ function applyPayloadObject_(payload, force, withCharts) {
   };
   var slideCache = {};
   var index = buildIndex_();
-  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0, charts: 0, charts_skipped: 0 };
+  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0, charts: 0, charts_skipped: 0, images: 0, images_skipped: 0, images_failed: 0 };
   var problems = [];
   var debugShown = false;
 
@@ -433,6 +462,13 @@ function applyPayloadObject_(payload, force, withCharts) {
         debugShown = true;
         problems.push('  debug (' + op.id + '): ' + (debugTitle_(op.slide).join(' ; ') || 'ไม่พบกล่องที่มีคำว่า Campaign + ชื่อสาขานี้เลย'));
       }
+      continue;
+    }
+
+    if (op.kind === 'image') {
+      if (!withImages) { counts.images_skipped++; continue; }
+      try { applyImageOp_(op, slide, counts, problems); }
+      catch (e) { counts.images_failed++; problems.push(op.id + ': ใส่รูปไม่สำเร็จ — ' + e.message); }
       continue;
     }
 

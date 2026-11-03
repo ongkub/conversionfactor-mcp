@@ -18,6 +18,7 @@
   <div id="confirm" style="display:none">
     <label><input type="checkbox" id="force"> ทับกล่องที่ทีมแก้ไว้ด้วย (ปกติไม่ต้องติ๊ก)</label>
     <label><input type="checkbox" id="charts"> อัปเดตกราฟอายุ×เพศ (แทนที่รูปกราฟเดิมของทีม — กู้ได้จากประวัติเวอร์ชัน)</label>
+    <label><input type="checkbox" id="images"> อัปเดตรูปครีเอทีฟอันดับ 1–3 (แทนที่รูปเดิมของทีม — ต้องเติมในวันที่สร้างรายงาน ลิงก์รูปหมดอายุเร็ว)</label>
     <button id="run" onclick="run()">ยืนยัน เติมข้อมูล</button>
   </div>
   <div id="out"></div>
@@ -43,12 +44,13 @@
         var c = r.counts;
         var t = 'ข้อมูลรอบ ' + (r.period ? r.period.current : '') + ' (ดึงเมื่อ ' + r.generated_at + ')\n' +
           'เติมแล้ว ' + c.filled + ' · ตรงอยู่แล้ว ' + c.unchanged + ' · ข้าม (ทีมแก้) ' + c.skipped_edited + ' · ไม่พบ ' + c.not_found +
-          (c.charts ? '\nวาดกราฟ ' + c.charts + ' กราฟ' : '') + (c.charts_skipped ? '\nข้ามกราฟ ' + c.charts_skipped + ' กราฟ (ไม่ได้ติ๊กอัปเดตกราฟ)' : '');
+          (c.charts ? '\nวาดกราฟ ' + c.charts + ' กราฟ' : '') + (c.charts_skipped ? '\nข้ามกราฟ ' + c.charts_skipped + ' กราฟ (ไม่ได้ติ๊กอัปเดตกราฟ)' : '') +
+            (c.images ? '\nใส่รูปครีเอทีฟ ' + c.images + ' รูป' : '') + (c.images_failed ? '\nโหลดรูปไม่ได้ ' + c.images_failed + ' รูป (คงรูปเดิมไว้)' : '') + (c.images_skipped ? '\nข้ามรูปครีเอทีฟ ' + c.images_skipped + ' รูป (ไม่ได้ติ๊ก)' : '');
         if (r.problems.length) t += '\n\nต้องดู:\n- ' + r.problems.join('\n- ');
         if (r.needs_review.length) t += '\n\nทีมต้องเติมเอง:\n- ' + r.needs_review.join('\n- ');
         o.textContent = t;
       }).withFailureHandler(function (e) { document.getElementById('run').disabled = false; fail(e); })
-        .applyLatest(snapshotId, document.getElementById('force').checked, document.getElementById('charts').checked);
+        .applyLatest(snapshotId, document.getElementById('force').checked, document.getElementById('charts').checked, document.getElementById('images').checked);
     }
   </script>
 </body>

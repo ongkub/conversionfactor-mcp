@@ -318,6 +318,35 @@ function chartPixelSize(widthPt, heightPt) {
   return { width: Math.max(200, Math.round(widthPt * scale)), height: Math.max(100, Math.round(heightPt * scale)) };
 }
 
+
+// ---- Creative pictures: the picture sitting directly above a rank box ("1 Engagement = …") ----
+
+var CREATIVE_TAG_PREFIX = 'spark:creative:';
+
+/**
+ * Which picture belongs to this rank box? 1) one this script tagged earlier, 2) otherwise the portrait-ish picture
+ * whose bottom edge is within 40 pt of the box top and that overlaps it horizontally (>= 60%). Chart pictures and wide
+ * pictures are ignored. Boxes are {left, top, width, height}; images also carry {title}. Returns the image or null.
+ */
+function pickCreativeImage_(box, images, tag) {
+  var i;
+  for (i = 0; i < images.length; i++) if (images[i].title === tag) return images[i];
+  var best = null;
+  var bestGap = 1e9;
+  for (i = 0; i < images.length; i++) {
+    var im = images[i];
+    var title = String(im.title || '');
+    if (title.indexOf(CHART_TAG_PREFIX) === 0 || title.indexOf(CREATIVE_TAG_PREFIX) === 0) continue;
+    if (!(im.height > 0) || im.width / im.height > 1.6) continue;
+    var overlap = Math.min(im.left + im.width, box.left + box.width) - Math.max(im.left, box.left);
+    if (overlap < 0.6 * Math.min(im.width, box.width)) continue;
+    var gap = Math.abs(im.top + im.height - box.top);
+    if (gap > 40) continue;
+    if (gap < bestGap) { best = im; bestGap = gap; }
+  }
+  return best;
+}
+
 // ---- Pull mode: fetch the latest complete report from ConversionFactor instead of pasting JSON ----
 
 var EXPORT_BASE_URL = 'https://conversion.sparkth.io';
@@ -362,5 +391,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }
