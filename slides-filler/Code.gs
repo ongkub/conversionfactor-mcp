@@ -340,6 +340,8 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
 
 /** Draw the column chart (Charts service) as a PNG blob of the given pixel size. */
 function drawChartBlob_(op, width, height) {
+  // the picture is shown at ~1/3 of its pixel size, so text sizes scale with the width to read like ~9 pt on the slide
+  var font = Math.max(11, Math.round(width / 46));
   var data = Charts.newDataTable().addColumn(Charts.ColumnType.STRING, 'Age');
   op.series.forEach(function (s) { data.addColumn(Charts.ColumnType.NUMBER, s.name); });
   op.categories.forEach(function (c, i) {
@@ -350,13 +352,12 @@ function drawChartBlob_(op, width, height) {
   var chart = Charts.newColumnChart()
     .setDataTable(data.build())
     .setColors(op.series.map(function (s) { return s.color; }))
-    .setLegendPosition(Charts.Position.BOTTOM)
     .setDimensions(width, height)
-    .setOption('legend', { textStyle: { fontSize: 13 } })
-    .setOption('hAxis', { textStyle: { fontSize: 13 } })
-    .setOption('vAxis', { format: 'short', textStyle: { fontSize: 13 }, minValue: 0 })
+    // setOption replaces the whole 'legend' object, so the position must be part of it
+    .setOption('legend', { position: 'bottom', maxLines: 2, textStyle: { fontSize: Math.max(10, Math.round(width / 54)) } })
+    .setOption('hAxis', { textStyle: { fontSize: font } })
+    .setOption('vAxis', { format: 'short', textStyle: { fontSize: font }, minValue: 0 })
     .setOption('bar', { groupWidth: '70%' })
-    .setOption('chartArea', { width: '88%', height: '62%' })
     .build();
   return chart.getAs('image/png');
 }
