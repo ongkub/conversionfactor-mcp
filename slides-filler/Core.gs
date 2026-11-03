@@ -99,15 +99,34 @@ function planShapeEdits(text, op) {
  *   3. same last segment after " - " (team label "GDN-Sangthai - Custom intent 70%" vs "GDN-Tier 1&2 - Custom intent 70%")
  * Returns { edits: [{row, col, oldText, newText}], unmatchedRows: [label], unusedCandidates: [name] }.
  */
+/** Sørensen–Dice similarity of two strings by character bigrams (0..1). */
+function diceBigrams(a, b) {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  var grams = {};
+  var total = 0;
+  for (var i = 0; i < a.length - 1; i++) { var g = a.substr(i, 2); grams[g] = (grams[g] || 0) + 1; total++; }
+  var hits = 0;
+  for (var j = 0; j < b.length - 1; j++) {
+    var h = b.substr(j, 2);
+    if (grams[h] > 0) { grams[h]--; hits++; }
+  }
+  return (2 * hits) / (total + (b.length - 1));
+}
+
 function planTableEdits(cells, op) {
   var low = function (v) { return normKey(v).toLowerCase(); };
   var lastSegment = function (v) {
     var parts = String(v).split(/[ \t\u00a0]-[ \t\u00a0]/);
     return parts.length > 1 ? low(parts[parts.length - 1]) : null;
   };
+  // Meta ad-set names start with a counter ("1_Sangthai Page …", "5_Construction …") that the team's labels drop
+  var dropCounter = function (k) { return k.replace(/^\d+[._)]/, ''); };
   var cands = op.candidates.map(function (c) {
     var keys = [String(c.key).toLowerCase()];
     (c.aliases || []).forEach(function (a) { keys.push(low(a)); });
+    var withoutCounter = keys.map(dropCounter);
+    withoutCounter.forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
     return { keys: keys, last: lastSegment(c.name), c: c };
   });
 
@@ -128,6 +147,10 @@ function planTableEdits(cells, op) {
       return cd.keys.some(function (k) { return k.indexOf(row.key) === 0 || (k.length >= 3 && row.key.indexOf(k) === 0); });
     },
     function (row, cd) { return !!row.last && !!cd.last && row.last === cd.last; },
+    // the team shortened the ad-set name ("Retargeting + 1% lookalike" inside "Sangthai Page Retargeting + 1%Lookalike")
+    function (row, cd) {
+      return row.key.length >= 8 && cd.keys.some(function (k) { return k.length >= 8 && (k.indexOf(row.key) >= 0 || row.key.indexOf(k) >= 0); });
+    },
   ];
   passes.forEach(function (test) {
     rows.forEach(function (row) {
@@ -139,6 +162,21 @@ function planTableEdits(cells, op) {
         return;
       }
     });
+  });
+
+  // last resort: near-identical names (comma vs plus, "ST850PN" vs "ST850") — best unused candidate above a high similarity
+  rows.forEach(function (row) {
+    if (row.cand >= 0 || row.key.length < 8) return;
+    var best = -1;
+    var bestScore = 0.8;
+    for (var i = 0; i < cands.length; i++) {
+      if (used[i]) continue;
+      for (var k = 0; k < cands[i].keys.length; k++) {
+        var score = diceBigrams(row.key, cands[i].keys[k]);
+        if (score >= bestScore) { bestScore = score; best = i; }
+      }
+    }
+    if (best >= 0) { row.cand = best; used[best] = true; }
   });
 
   var edits = [];
@@ -291,5 +329,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

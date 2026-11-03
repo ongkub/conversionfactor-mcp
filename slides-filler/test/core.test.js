@@ -255,3 +255,46 @@ test('pull mode: status messages and payload summary', () => {
   assert.match(core.explainExportStatus(503), /503/);
   assert.deepEqual(core.describePayload({ period: { current: '16/09/2026 - 15/10/2026' }, generated_at: 'x', fills: [1, 2] }), { period: '16/09/2026 - 15/10/2026', generated_at: 'x', fills: 2 });
 });
+
+test('table matching: Meta ad-set names vs the labels the team typed (Engagement VDO slide)', () => {
+  const cell = (label) => [label, '', '', '', ''];
+  const cells = [
+    ['Ads Target', 'Result', 'CPA', 'Budget', 'MoM (Budget)'],
+    cell('1. Retargeting + 1% lookalike'),
+    cell('2. Retargeting ลอนผนัง, ST850PN+1%lookalike '),
+    cell('3. 2% lookalike Sangthai Page Retargeting'),
+    cell('4. Construction '),
+  ];
+  const name = (n) => ({ name: n, key: n.replace(/[\s\-–. ]/g, ''), cells: { '1': n } });
+  const plan = core.planTableEdits(cells, { candidates: [
+    name('1_Sangthai Page Retargeting + 1%Lookalike'),
+    name('2_Retargetingลอนผนัง +ST850+ 1%Lookalike'),
+    name('3_2% lookalike Sangthai Page Retargeting'),
+    name('5_Construction 05/2026 (min500.-/m. 28/09)'),
+  ] });
+  assert.deepEqual(plan.unmatchedRows, []);
+  assert.deepEqual(plan.unusedCandidates, []);
+  const filled = plan.edits.map((e) => [e.row, e.newText]);
+  assert.deepEqual(filled, [
+    [1, '1_Sangthai Page Retargeting + 1%Lookalike'],
+    [2, '2_Retargetingลอนผนัง +ST850+ 1%Lookalike'],
+    [3, '3_2% lookalike Sangthai Page Retargeting'],
+    [4, '5_Construction 05/2026 (min500.-/m. 28/09)'],
+  ]);
+});
+
+test('table matching: does not pair unrelated names', () => {
+  const cells = [['Ads Target', 'Result'], ['1. Core Audience', ''], ['2. Construction', '']];
+  const plan = core.planTableEdits(cells, { candidates: [
+    { name: 'Business Owner', key: 'BusinessOwner', cells: { '1': 'x' } },
+    { name: 'CA+LAL', key: 'CA+LAL', cells: { '1': 'y' } },
+  ] });
+  assert.equal(plan.edits.length, 0);
+  assert.equal(plan.unmatchedRows.length, 2);
+});
+
+test('dice similarity', () => {
+  assert.equal(core.diceBigrams('abc', 'abc'), 1);
+  assert.ok(core.diceBigrams('retargetingลอนผนัง,st850pn+1%lookalike', 'retargetingลอนผนัง+st850+1%lookalike') > 0.8);
+  assert.ok(core.diceBigrams('coreaudience', 'businessowner') < 0.3);
+});
