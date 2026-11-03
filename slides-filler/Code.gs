@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.2-images-2026-11-03';
+var SCRIPT_VERSION = 'v4.3-pull-snapshot-2026-11-03';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -65,7 +65,7 @@ function fetchExport_(opts) {
   if (status !== 200) throw new Error(explainExportStatus(status));
   var payload = JSON.parse(res.getContentText());
   if (!payload || payload.schema !== SCHEMA) throw new Error('ข้อมูลที่ได้ไม่ใช่รูปแบบ ' + SCHEMA);
-  return { payload: payload, snapshotId: res.getHeaders()['X-Report-Snapshot-Id'] || '' };
+  return { payload: payload, snapshotId: headerValue_(res.getHeaders(), 'X-Report-Snapshot-Id') };
 }
 
 /** Step 1: show which report would be used (period, time, size) before anything is written to the deck. */
@@ -78,6 +78,8 @@ function previewLatest(periodEnd) {
 
 /** Step 2: fetch that exact snapshot again and fill the deck. */
 function applyLatest(snapshotId, force, withCharts, withImages) {
+  // never fall back to "latest": that could fill a different period than the one the person checked
+  if (!snapshotId) throw new Error('ไม่ได้รหัสรายงานจากขั้นตอนตรวจ — กดตรวจรายงานที่จะใช้อีกครั้งก่อนยืนยัน');
   var r = fetchExport_({ snapshotId: snapshotId });
   return applyPayloadObject_(r.payload, force, withCharts, withImages);
 }

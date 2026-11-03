@@ -288,6 +288,13 @@ function shapeMatches_(text, selector) {
 
 // ---- Charts: replace the picture the team pasted under an "Engagement" / "Reach" label ----
 
+/** Header lookup that ignores case (Apps Script returns the names as the server sent them). */
+function headerValue_(headers, name) {
+  var want = String(name).toLowerCase();
+  for (var k in headers) if (Object.prototype.hasOwnProperty.call(headers, k) && String(k).toLowerCase() === want) return headers[k];
+  return '';
+}
+
 var CHART_TAG_PREFIX = 'spark:chart:';
 
 /**
@@ -391,5 +398,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

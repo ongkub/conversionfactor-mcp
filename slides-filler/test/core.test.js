@@ -343,3 +343,9 @@ test('creative pictures: the picture above each rank box, tagged ones first, cha
   assert.equal(core.pickCreativeImage_(box2, [pic1, tagged], 'spark:creative:3'), null); // 1's picture is not above box 2 and the tag is another
   assert.equal(core.pickCreativeImage_(box1, [{ left: 793, top: 100, width: 125, height: 50, title: '' }], 'x'), null);
 });
+
+test('headerValue_ finds a header whatever its case', () => {
+  assert.equal(core.headerValue_({ 'x-report-snapshot-id': 'abc' }, 'X-Report-Snapshot-Id'), 'abc');
+  assert.equal(core.headerValue_({ 'X-Report-Snapshot-Id': 'abc' }, 'x-report-snapshot-id'), 'abc');
+  assert.equal(core.headerValue_({ 'Content-Type': 'x' }, 'X-Report-Snapshot-Id'), '');
+});
