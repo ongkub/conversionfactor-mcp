@@ -76,7 +76,7 @@ Facebook Overview 11,229.16 · Message รวม 2,078 แชต (90,278.98 บ�
   (LINE Ads และเพื่อนสะสม LINE OA ระบบเติมให้แล้ว — ตัวเลขเพื่อนจาก API อาจต่างจาก OA Manager เล็กน้อย)
 □ TikTok Ads (6-sec view, Follower)
 □ Website & SEO (GA4 / Search Console / อันดับคีย์เวิร์ด)
-□ Creative (High performing creative) และ Competitor (Fanpage Karma — API ต้องอัปเกรดแผน)
+□ Competitor (Fanpage Karma — API ต้องอัปเกรดแผน) และรูปครีเอทีฟสไลด์สาขา (รูปอันดับ 1–3 ของแคมเปญหลักติ๊กให้ระบบใส่ได้ในกล่องเติมข้อมูล)
 □ ข้อสังเกตและ Next step ทุกหน้า
 ```
 
