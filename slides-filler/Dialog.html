@@ -15,6 +15,7 @@
   <div>วางข้อความ JSON จากหัวข้อ <b>"7. JSON สำหรับสคริปต์เติมสไลด์"</b> ของ tool <code>get_monthly_report_data</code> (เฉพาะข้อความในกล่อง <code>{ … }</code>)</div>
   <textarea id="json" placeholder='{"schema":"sangthai-slides/1", …}'></textarea>
   <label><input type="checkbox" id="force"> ทับกล่องที่ทีมแก้ไว้ด้วย (ปกติไม่ต้องติ๊ก)</label>
+  <label><input type="checkbox" id="charts"> อัปเดตกราฟอายุ×เพศ (แทนที่รูปกราฟเดิมของทีม — กู้ได้จากประวัติเวอร์ชัน)</label>
   <button id="run" onclick="run()">เติมข้อมูล</button>
   <div id="out"></div>
   <script>
@@ -27,13 +28,14 @@
           btn.disabled = false;
           var c = r.counts;
           var t = 'ข้อมูลรอบ ' + (r.period ? r.period.current : '') + ' (ดึงเมื่อ ' + r.generated_at + ')\n' +
-            'เติมแล้ว ' + c.filled + ' · ตรงอยู่แล้ว ' + c.unchanged + ' · ข้าม (ทีมแก้) ' + c.skipped_edited + ' · ไม่พบ ' + c.not_found;
+            'เติมแล้ว ' + c.filled + ' · ตรงอยู่แล้ว ' + c.unchanged + ' · ข้าม (ทีมแก้) ' + c.skipped_edited + ' · ไม่พบ ' + c.not_found +
+            (c.charts ? '\nวาดกราฟ ' + c.charts + ' กราฟ' : '') + (c.charts_skipped ? '\nข้ามกราฟ ' + c.charts_skipped + ' กราฟ (ไม่ได้ติ๊กอัปเดตกราฟ)' : '');
           if (r.problems.length) t += '\n\nต้องดู:\n- ' + r.problems.join('\n- ');
           if (r.needs_review.length) t += '\n\nทีมต้องเติมเอง:\n- ' + r.needs_review.join('\n- ');
           out.textContent = t;
         })
         .withFailureHandler(function (e) { btn.disabled = false; out.className = 'err'; out.textContent = e.message; })
-        .applyPayload(document.getElementById('json').value, document.getElementById('force').checked);
+        .applyPayload(document.getElementById('json').value, document.getElementById('force').checked, document.getElementById('charts').checked);
     }
   </script>
 </body>

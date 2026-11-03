@@ -285,6 +285,39 @@ function shapeMatches_(text, selector) {
   return true;
 }
 
+
+// ---- Charts: replace the picture the team pasted under an "Engagement" / "Reach" label ----
+
+var CHART_TAG_PREFIX = 'spark:chart:';
+
+/**
+ * Which picture does this chart replace? 1) a picture this script tagged earlier, 2) otherwise the nearest wide
+ * picture below the label that starts at the label's left edge. Boxes are {left, top, width, height}; images also
+ * carry {title, ref}. Returns the image or null.
+ */
+function pickChartImage_(label, images, tag) {
+  var i;
+  for (i = 0; i < images.length; i++) if (images[i].title === tag) return images[i];
+  var best = null;
+  for (i = 0; i < images.length; i++) {
+    var im = images[i];
+    if (String(im.title || '').indexOf(CHART_TAG_PREFIX) === 0) continue; // another chart's picture
+    var below = im.top >= label.top - 4;
+    var startsAtLabel = im.left <= label.left + 40 && im.left + im.width >= label.left + 20;
+    var wide = im.height > 0 && im.width / im.height >= 1.3;
+    if (!below || !startsAtLabel || !wide) continue;
+    if (!best || im.top < best.top) best = im;
+  }
+  return best;
+}
+
+/** Pixel size for the chart image: 3x the picture's size in points (crisp), capped at 1200 px wide, same aspect. */
+function chartPixelSize(widthPt, heightPt) {
+  var scale = 3;
+  if (widthPt * scale > 1200) scale = 1200 / widthPt;
+  return { width: Math.max(200, Math.round(widthPt * scale)), height: Math.max(100, Math.round(heightPt * scale)) };
+}
+
 // ---- Pull mode: fetch the latest complete report from ConversionFactor instead of pasting JSON ----
 
 var EXPORT_BASE_URL = 'https://conversion.sparkth.io';
@@ -329,5 +362,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.0-pull-2026-11-01';
+var SCRIPT_VERSION = 'v4.1-charts-2026-11-03';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -77,9 +77,9 @@ function previewLatest(periodEnd) {
 }
 
 /** Step 2: fetch that exact snapshot again and fill the deck. */
-function applyLatest(snapshotId, force) {
+function applyLatest(snapshotId, force, withCharts) {
   var r = fetchExport_({ snapshotId: snapshotId });
-  return applyPayloadObject_(r.payload, force);
+  return applyPayloadObject_(r.payload, force, withCharts);
 }
 
 function showFillDialog() {
@@ -123,6 +123,23 @@ function collectShapes_(elements, pageW, pageH, out) {
   }
 }
 
+function collectImages_(elements, pageW, pageH, out) {
+  for (var i = 0; i < elements.length; i++) {
+    var el = elements[i];
+    var type = el.getPageElementType();
+    if (type === SlidesApp.PageElementType.GROUP) {
+      collectImages_(el.asGroup().getChildren(), pageW, pageH, out);
+    } else if (type === SlidesApp.PageElementType.IMAGE) {
+      var left = el.getLeft();
+      var top = el.getTop();
+      var width = el.getWidth();
+      var height = el.getHeight();
+      var outside = isFinite(left) && isFinite(top) && (left >= pageW || left + width <= 0 || top >= pageH || top + height <= 0);
+      if (!outside) out.push({ el: el, left: left, top: top, width: width, height: height });
+    }
+  }
+}
+
 function buildIndex_() {
   var pres = SlidesApp.getActivePresentation();
   var w = pres.getPageWidth();
@@ -132,9 +149,11 @@ function buildIndex_() {
     collectShapes_(slide.getPageElements(), w, h, shapes);
     var tables = [];
     collectTables_(slide.getPageElements(), w, h, tables);
+    var images = [];
+    collectImages_(slide.getPageElements(), w, h, images);
     // Read every text once: finding a slide for each of ~200 ops would otherwise re-read the whole deck each time
     var texts = shapes.map(function (sh) { try { return sh.getText().asString(); } catch (e) { return ''; } });
-    return { number: i + 1, shapes: shapes, texts: texts, tables: tables };
+    return { number: i + 1, shapes: shapes, texts: texts, tables: tables, images: images };
   });
 }
 
@@ -319,13 +338,60 @@ function applyTableOp_(op, slide, props, force, counts, problems) {
   return touched;
 }
 
-function applyPayload(jsonText, force) {
-  var payload = JSON.parse(jsonText);
-  if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
-  return applyPayloadObject_(payload, force);
+/** Draw the column chart (Charts service) as a PNG blob of the given pixel size. */
+function drawChartBlob_(op, width, height) {
+  var data = Charts.newDataTable().addColumn(Charts.ColumnType.STRING, 'Age');
+  op.series.forEach(function (s) { data.addColumn(Charts.ColumnType.NUMBER, s.name); });
+  op.categories.forEach(function (c, i) {
+    var row = [c];
+    op.series.forEach(function (s) { row.push(s.values[i] || 0); });
+    data.addRow(row);
+  });
+  var chart = Charts.newColumnChart()
+    .setDataTable(data.build())
+    .setColors(op.series.map(function (s) { return s.color; }))
+    .setLegendPosition(Charts.Position.BOTTOM)
+    .setDimensions(width, height)
+    .setOption('legend', { textStyle: { fontSize: 13 } })
+    .setOption('hAxis', { textStyle: { fontSize: 13 } })
+    .setOption('vAxis', { format: 'short', textStyle: { fontSize: 13 }, minValue: 0 })
+    .setOption('bar', { groupWidth: '70%' })
+    .setOption('chartArea', { width: '88%', height: '62%' })
+    .build();
+  return chart.getAs('image/png');
 }
 
-function applyPayloadObject_(payload, force) {
+/** Replace the team's picture under the op's label with a freshly drawn chart; tag it so next month finds it. */
+function applyChartOp_(op, slide, counts, problems) {
+  var label = null;
+  for (var i = 0; i < slide.shapes.length && !label; i++) {
+    if (String(slide.texts[i]).replace(/^\s+|\s+$/g, '').toLowerCase() === op.slot.toLowerCase()) label = slide.shapes[i];
+  }
+  if (!label) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบหัวข้อ "' + op.slot + '"'); return; }
+  var box = { left: label.getLeft(), top: label.getTop(), width: label.getWidth(), height: label.getHeight() };
+  var tag = CHART_TAG_PREFIX + op.id;
+  var images = slide.images.map(function (im) {
+    var title = '';
+    try { title = im.el.getTitle() || ''; } catch (e) {}
+    return { el: im.el, left: im.left, top: im.top, width: im.width, height: im.height, title: title };
+  });
+  var target = pickChartImage_(box, images, tag);
+  if (!target) { counts.not_found++; problems.push(op.id + ': พบหัวข้อ "' + op.slot + '" หน้า ' + slide.number + ' แต่ไม่พบรูปกราฟใต้หัวข้อ'); return; }
+  var size = chartPixelSize(target.width, target.height);
+  var image = target.el.asImage();
+  image.replace(drawChartBlob_(op, size.width, size.height), false);
+  image.setTitle(tag);
+  counts.filled++;
+  counts.charts++;
+}
+
+function applyPayload(jsonText, force, withCharts) {
+  var payload = JSON.parse(jsonText);
+  if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
+  return applyPayloadObject_(payload, force, withCharts);
+}
+
+function applyPayloadObject_(payload, force, withCharts) {
 
   // Remembered values: read once, collect writes, save once at the end (hundreds of single calls made the run very slow)
   var docProps = PropertiesService.getDocumentProperties();
@@ -340,7 +406,7 @@ function applyPayloadObject_(payload, force) {
   };
   var slideCache = {};
   var index = buildIndex_();
-  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0 };
+  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0, charts: 0, charts_skipped: 0 };
   var problems = [];
   var debugShown = false;
 
@@ -366,6 +432,13 @@ function applyPayloadObject_(payload, force) {
         debugShown = true;
         problems.push('  debug (' + op.id + '): ' + (debugTitle_(op.slide).join(' ; ') || 'ไม่พบกล่องที่มีคำว่า Campaign + ชื่อสาขานี้เลย'));
       }
+      continue;
+    }
+
+    if (op.kind === 'chart') {
+      if (!withCharts) { counts.charts_skipped++; continue; }
+      try { applyChartOp_(op, slide, counts, problems); }
+      catch (e) { counts.not_found++; problems.push(op.id + ': วาดกราฟไม่สำเร็จ — ' + e.message); }
       continue;
     }
 

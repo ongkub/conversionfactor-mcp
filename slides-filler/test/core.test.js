@@ -298,3 +298,28 @@ test('dice similarity', () => {
   assert.ok(core.diceBigrams('retargetingลอนผนัง,st850pn+1%lookalike', 'retargetingลอนผนัง+st850+1%lookalike') > 0.8);
   assert.ok(core.diceBigrams('coreaudience', 'businessowner') < 0.3);
 });
+
+test('charts: picks the picture under the label, prefers a tagged one, ignores other charts', () => {
+  // geometry of the Engagement VDO slide (points): two chart pictures stacked at the left, creatives at the far right
+  const engLabel = { left: 70, top: 252, width: 110, height: 22 };
+  const reachLabel = { left: 70, top: 449, width: 60, height: 22 };
+  const imgEng = { left: 66, top: 275, width: 460, height: 125, title: '' };
+  const imgReach = { left: 66, top: 472, width: 460, height: 170, title: '' };
+  const creative = { left: 670, top: 400, width: 125, height: 200, title: '' };
+  const logo = { left: 40, top: 20, width: 60, height: 60, title: '' };
+  const all = [creative, logo, imgReach, imgEng];
+  assert.equal(core.pickChartImage_(engLabel, all, 'spark:chart:e'), imgEng);
+  assert.equal(core.pickChartImage_(reachLabel, all, 'spark:chart:r'), imgReach);
+  // next month: tagged pictures are found by tag even if moved, and are not stolen by the other label
+  const taggedEng = { left: 300, top: 600, width: 460, height: 125, title: 'spark:chart:e' };
+  assert.equal(core.pickChartImage_(engLabel, [creative, taggedEng, imgReach], 'spark:chart:e'), taggedEng);
+  assert.equal(core.pickChartImage_(reachLabel, [creative, imgReach, taggedEng], 'spark:chart:r'), imgReach);
+  assert.equal(core.pickChartImage_(engLabel, [creative, logo], 'spark:chart:e'), null);
+});
+
+test('charts: pixel size keeps the aspect and caps the width', () => {
+  assert.deepEqual(core.chartPixelSize(300, 100), { width: 900, height: 300 });
+  const big = core.chartPixelSize(600, 200);
+  assert.equal(big.width, 1200);
+  assert.equal(big.height, 400);
+});
