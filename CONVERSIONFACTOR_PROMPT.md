@@ -14,6 +14,26 @@
 | `pixel_health_check` | ตรวจ Pixel/CAPI signal และ event volume |
 | `suggest_audience_plan` | วางแผน Audience Targeting สำหรับ Meta Ads |
 | `get_monthly_report_data` | ตัวเลขรายงานรายเดือนรอบ 16–15 (Meta/Google/LINE) พร้อม JSON เติมสไลด์ |
+| `list_game_types` | รายการเกม + schema ของ config + ช่องดีไซน์ + วิธีทำตามรูปดีไซน์ |
+| `get_game` | ข้อมูล campaign, design, draft, สถิติ |
+| `create_game` | สร้างเกม Draft ใหม่ |
+| `update_game` | แก้ไขเกม (Patch) |
+| `publish_game` | เปลี่ยน Draft → Live (ต้องยืนยัน) |
+| `upload_game_asset` | อัปโหลดรูป png/jpeg/webp/gif ≤3MB (base64) → asset_id |
+| `list_game_assets` | ดูรายการ asset ที่อัปโหลด |
+| `get_game_preview` | ลิงก์ทดสอบ (อายุ 24 ชม.) + ลิงก์เล่นจริง |
+
+## สร้าง/ปรับเกมกิจกรรม (Game v2)
+
+- ใช้ `list_game_types` ดูวิธีตั้งค่าและช่องดีไซน์ก่อนเริ่ม
+- ต้องมี campaign ในแอดมินก่อน (tool ไม่สร้าง campaign) · เขียนได้เฉพาะ key ของแอดมินแบรนด์นั้น
+- `create_game` / `update_game` / `publish_game` ค่าเริ่ม `dry_run: true` = ดูผลและ diff โดยไม่บันทึก · ส่ง `dry_run: false` เพื่อบันทึก **draft** (ยังไม่ขึ้นจริงจนกว่าจะ publish)
+- แจ้ง warnings ในผลลัพธ์ให้ผู้ใช้ทุกครั้ง (เช่น CSS ที่ผิดกติกาจะถูกตัดทั้งก้อน)
+- ลูกค้าส่งรูปดีไซน์มา: ดึงสีใส่ `design.tokens.colors`, เลือกฟอนต์ไทยที่ใกล้สุดจาก allowlist, อัปโหลดภาพจริงด้วย `upload_game_asset` แล้วใส่ asset_id ใน `design.assets`, จัด layout ด้วย `custom_css` + `blocks`, แล้วเปิด `get_game_preview` ตรวจ
+- ไม่รองรับ JavaScript ของลูกค้า · `custom_css` ใช้ `url()` ได้เฉพาะรูปที่อัปโหลด · ห้ามเดาลิงก์ปลายทาง ข้อความเงื่อนไข และรางวัล ให้ถามผู้ใช้
+- การ Publish: ต้อง preview ให้ลูกค้าดูก่อน และ **ต้องถามยืนยันผู้ใช้ทุกครั้ง** ห้ามเดาข้อความเงื่อนไข/รางวัล
+- ลิงก์ขั้นตอนการทำงาน: `workflows/game_design.md`
+
 
 ## วิธีทำงาน
 
