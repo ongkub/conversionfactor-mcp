@@ -71,7 +71,7 @@
 ## อัปเดตเมื่อมี tool ใหม่
 
 - **tool ใหม่ใช้ได้ทันที** เพราะ MCP Server อยู่บน Cloud ไม่ต้องติดตั้งใหม่ (ถ้า Claude ยังไม่เห็น ให้ปิด-เปิด Claude Desktop หรือเริ่มแชตใหม่)
-- สิ่งที่ต้องอัปเดตเองเมื่อมีการเปลี่ยน: **Project Instructions** — เปิดไฟล์ `CONVERSIONFACTOR_PROMPT.md` เวอร์ชันล่าสุด แล้ววางทับใน Claude Project (ครั้งล่าสุดเพิ่มกติกาของ `get_monthly_report_data`)
+- สิ่งที่ต้องอัปเดตเองเมื่อมีการเปลี่ยน: **Project Instructions** — เปิดไฟล์ `CONVERSIONFACTOR_PROMPT.md` เวอร์ชันล่าสุด แล้ววางทับใน Claude Project (ครั้งล่าสุดเพิ่ม tools สร้าง/ดีไซน์เกม ต้องวาง Project Instructions ใหม่ และชี้ไป `workflows/game_design.md`)
 - ใครที่ตั้งค่าไว้ตั้งแต่ก่อนมี tool รายงานรายเดือน ให้ทำข้อ 2 หนึ่งครั้ง
 
 ## ทดสอบว่าเชื่อมต่อสำเร็จ
