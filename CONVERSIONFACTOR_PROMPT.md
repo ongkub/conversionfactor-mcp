@@ -19,7 +19,8 @@
 | `create_game` | สร้างเกม Draft ใหม่ |
 | `update_game` | แก้ไขเกม (Patch) |
 | `publish_game` | เปลี่ยน Draft → Live (ต้องยืนยัน) |
-| `upload_game_asset` | อัปโหลดรูป png/jpeg/webp/gif ≤3MB (base64) → asset_id |
+| `get_game_asset_upload_link` | ลิงก์หน้าอัปโหลดรูปในแอดมิน — ใช้เมื่อผู้ใช้มีรูปจริงจากลูกค้า |
+| `upload_game_asset` | อัปโหลดรูปเล็กเป็น base64 (≤3MB) → asset_id — รูปใหญ่/รูปที่ผู้ใช้แนบ ใช้ลิงก์ด้านบนแทน |
 | `list_game_assets` | ดูรายการ asset ที่อัปโหลด |
 | `get_game_preview` | ลิงก์ทดสอบ (อายุ 24 ชม.) + ลิงก์เล่นจริง |
 
@@ -27,9 +28,10 @@
 
 - ใช้ `list_game_types` ดูวิธีตั้งค่าและช่องดีไซน์ก่อนเริ่ม
 - ต้องมี campaign ในแอดมินก่อน (tool ไม่สร้าง campaign) · เขียนได้เฉพาะ key ของแอดมินแบรนด์นั้น
+- ถามผู้ใช้ก่อนสร้างทุกครั้งว่า **เล่นบน LINE** (`play_mode: "line"` ต้องมี LIFF ID ก่อน publish) หรือ **เว็บทั่วไป** (`play_mode: "web"` ไม่มีรางวัล ไม่ส่ง conversion ผู้เล่นใส่ชื่อเล่น)
 - `create_game` / `update_game` / `publish_game` ค่าเริ่ม `dry_run: true` = ดูผลและ diff โดยไม่บันทึก · ส่ง `dry_run: false` เพื่อบันทึก **draft** (ยังไม่ขึ้นจริงจนกว่าจะ publish)
 - แจ้ง warnings ในผลลัพธ์ให้ผู้ใช้ทุกครั้ง (เช่น CSS ที่ผิดกติกาจะถูกตัดทั้งก้อน)
-- ลูกค้าส่งรูปดีไซน์มา: ดึงสีใส่ `design.tokens.colors`, เลือกฟอนต์ไทยที่ใกล้สุดจาก allowlist, อัปโหลดภาพจริงด้วย `upload_game_asset` แล้วใส่ asset_id ใน `design.assets`, จัด layout ด้วย `custom_css` + `blocks`, แล้วเปิด `get_game_preview` ตรวจ
+- ลูกค้าส่งรูปดีไซน์มา: ดึงสีใส่ `design.tokens.colors`, เลือกฟอนต์ไทยที่ใกล้สุดจาก allowlist, ให้ผู้ใช้อัปโหลดภาพจริงผ่าน `get_game_asset_upload_link` แล้วอ่าน asset_id ด้วย `list_game_assets` ใส่ใน `design.assets`, จัด layout ด้วย `custom_css` + `blocks`, แล้วเปิด `get_game_preview` ตรวจ
 - ไม่รองรับ JavaScript ของลูกค้า · `custom_css` ใช้ `url()` ได้เฉพาะรูปที่อัปโหลด · ห้ามเดาลิงก์ปลายทาง ข้อความเงื่อนไข และรางวัล ให้ถามผู้ใช้
 - การ Publish: ต้อง preview ให้ลูกค้าดูก่อน และ **ต้องถามยืนยันผู้ใช้ทุกครั้ง** ห้ามเดาข้อความเงื่อนไข/รางวัล
 - ลิงก์ขั้นตอนการทำงาน: `workflows/game_design.md`
