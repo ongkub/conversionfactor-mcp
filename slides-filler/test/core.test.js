@@ -349,3 +349,129 @@ test('headerValue_ finds a header whatever its case', () => {
   assert.equal(core.headerValue_({ 'X-Report-Snapshot-Id': 'abc' }, 'x-report-snapshot-id'), 'abc');
   assert.equal(core.headerValue_({ 'Content-Type': 'x' }, 'X-Report-Snapshot-Id'), '');
 });
+
+test('orderByPosition_: orders rows top-to-bottom and same-row (< 5pt top diff) left-to-right', () => {
+  const b1 = { id: 'r1c2', top: 102, left: 300 };
+  const b2 = { id: 'r1c1', top: 100, left: 100 };
+  const b3 = { id: 'r1c3', top: 104, left: 500 };
+  const b4 = { id: 'r2c1', top: 105, left: 50 }; // diff 5pt from 100 -> next row
+  const b5 = { id: 'r3c1', top: 250, left: 100 };
+  const input = [b5, b1, b4, b3, b2];
+  const ordered = core.orderByPosition_(input);
+  assert.deepStrictEqual(ordered.map((x) => x.id), ['r1c1', 'r1c2', 'r1c3', 'r2c1', 'r3c1']);
+  // does not mutate input
+  assert.deepStrictEqual(input.map((x) => x.id), ['r3c1', 'r1c2', 'r2c1', 'r1c3', 'r1c1']);
+  assert.deepStrictEqual(core.orderByPosition_([]), []);
+});
+
+test('planLineEdits: BKI adsets box matches Vehicle/Retired/Investor, ignores label-less lines, reports Retarget Video Promotion', () => {
+  const box = [
+    'Target audience (Adset)',
+    '',
+    'Vehicle\t\t\t             \tResult:  617,153',
+    'Retarget Video Promotion         \tResult : 371,660',
+    'Everyday Safety\t\t           \tResult : 72,474',
+    'Retired\t\t\t           \tResult : 47,686',
+    'Investor\t\t\t           \tResult : 28,200',
+  ].join('\n');
+  const plan = core.planLineEdits(box, {
+    marker: 'Result',
+    candidates: [
+      { name: 'Vehicle Insurance', key: 'VehicleInsurance', value: '618,000' },
+      { name: 'Everyday Safety', key: 'EverydaySafety', value: '73,000' },
+      { name: 'Retired Insurance', key: 'RetiredInsurance', value: '48,000' },
+      { name: 'Investor', key: 'Investor', aliases: ['Investors'], value: '28,007' },
+      { name: 'Unused Adset', key: 'UnusedAdset', value: '999' },
+    ],
+  });
+  assert.deepStrictEqual(plan.unmatchedLabels, ['Retarget Video Promotion']);
+  assert.deepStrictEqual(plan.unusedCandidates, ['Unused Adset']);
+  assert.deepStrictEqual(plan.edits.map((e) => [e.label, e.oldText, e.newText]), [
+    ['Vehicle', '617,153', '618,000'],
+    ['Everyday Safety', '72,474', '73,000'],
+    ['Retired', '47,686', '48,000'],
+    ['Investor', '28,200', '28,007'],
+  ]);
+  const out = core.applyEdits_(box, plan.edits);
+  assert.strictEqual(out, [
+    'Target audience (Adset)',
+    '',
+    'Vehicle\t\t\t             \tResult:  618,000',
+    'Retarget Video Promotion         \tResult : 371,660',
+    'Everyday Safety\t\t           \tResult : 73,000',
+    'Retired\t\t\t           \tResult : 48,000',
+    'Investor\t\t\t           \tResult : 28,007',
+  ].join('\n'));
+});
+
+test('planLineEdits: BKI objective box strips leading numbering and replaces values at right offsets', () => {
+  const box = [
+    'Objective',
+    '',
+    '',
+    '    1.  เพิ่มค่า Engagement หน้าเพจ\t               Result: 16,831',
+    '    2.  เก็บ Data กลุ่มเป้าหมาย\t\tResult: 45,601',
+  ].join('\n');
+  const plan = core.planLineEdits(box, {
+    candidates: [
+      { name: 'เพิ่มค่า Engagement หน้าเพจ', key: core.normKey('เพิ่มค่า Engagement หน้าเพจ'), value: '17,000' },
+      { name: 'เก็บ Data กลุ่มเป้าหมาย', key: core.normKey('เก็บ Data กลุ่มเป้าหมาย'), value: '46,000' },
+    ],
+  });
+  assert.deepStrictEqual(plan.unmatchedLabels, []);
+  assert.deepStrictEqual(plan.unusedCandidates, []);
+  assert.deepStrictEqual(plan.edits.map((e) => e.label), [
+    'เพิ่มค่า Engagement หน้าเพจ',
+    'เก็บ Data กลุ่มเป้าหมาย',
+  ]);
+  assert.strictEqual(core.applyEdits_(box, plan.edits), [
+    'Objective',
+    '',
+    '',
+    '    1.  เพิ่มค่า Engagement หน้าเพจ\t               Result: 17,000',
+    '    2.  เก็บ Data กลุ่มเป้าหมาย\t\tResult: 46,000',
+  ].join('\n'));
+});
+
+test('planLineEdits: BKI third box matches case-insensitively (Health concern -> health concern) and handles empty spans', () => {
+  const box = [
+    'Health concern\t\tResult: 12,288',
+    'Vehicles\t\t\tResult: 2,663',
+    '1% LAL + Retarget\t\tResult: 1,223',
+    'Core insurance\t\tResult:',
+  ].join('\n');
+  const plan = core.planLineEdits(box, {
+    candidates: [
+      { name: 'health concern', key: 'healthconcern', value: '12,500' },
+      { name: 'Vehicles', key: 'Vehicles', value: '2,700' },
+      { name: '1% LAL + Retarget', key: '1%LAL+Retarget', value: '1,300' },
+      { name: 'Core insurance', key: 'Coreinsurance', value: '700' },
+    ],
+  });
+  assert.deepStrictEqual(plan.unmatchedLabels, []);
+  assert.deepStrictEqual(plan.unusedCandidates, []);
+  assert.strictEqual(plan.edits[3].start, plan.edits[3].end);
+  assert.strictEqual(plan.edits[3].oldText, '');
+  assert.strictEqual(core.applyEdits_(box, plan.edits), [
+    'Health concern\t\tResult: 12,500',
+    'Vehicles\t\t\tResult: 2,700',
+    '1% LAL + Retarget\t\tResult: 1,300',
+    'Core insurance\t\tResult:700',
+  ].join('\n'));
+});
+
+test('planLineEdits: ignores marker lines with no label before the marker', () => {
+  const box1 = 'Optimization goal:\tReach\nResult:\t\t1,098,983';
+  const box2 = 'ยางรถยนต์ของเราหมดอายุหรือยังนะ\n\nResult:\t\t189,641\nCTR: \t\t0.34%';
+  const cands = [{ name: 'Reach', key: 'Reach', value: '999' }];
+  assert.deepStrictEqual(core.planLineEdits(box1, { candidates: cands }), {
+    edits: [],
+    unmatchedLabels: [],
+    unusedCandidates: ['Reach'],
+  });
+  assert.deepStrictEqual(core.planLineEdits(box2, { candidates: cands }), {
+    edits: [],
+    unmatchedLabels: [],
+    unusedCandidates: ['Reach'],
+  });
+});
