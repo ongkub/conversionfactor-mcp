@@ -425,7 +425,7 @@ function pickChartImage_(label, images, tag) {
   var best = null;
   for (i = 0; i < images.length; i++) {
     var im = images[i];
-    if (String(im.title || '').indexOf(CHART_TAG_PREFIX) === 0) continue; // another chart's picture
+    if (String(im.title || '').indexOf(CHART_TAG_PREFIX) === 0 || String(im.title || '').indexOf('spark:g') === 0) continue; // another chart's picture (or a Google visual)
     var below = im.top >= label.top - 4;
     var startsAtLabel = im.left <= label.left + 40 && im.left + im.width >= label.left + 20;
     var wide = im.height > 0 && im.width / im.height >= 1.3;
@@ -460,7 +460,7 @@ function pickCreativeImage_(box, images, tag) {
   for (i = 0; i < images.length; i++) {
     var im = images[i];
     var title = String(im.title || '');
-    if (title.indexOf(CHART_TAG_PREFIX) === 0 || title.indexOf(CREATIVE_TAG_PREFIX) === 0) continue;
+    if (title.indexOf(CHART_TAG_PREFIX) === 0 || title.indexOf(CREATIVE_TAG_PREFIX) === 0 || title.indexOf('spark:g') === 0) continue;
     if (!(im.height > 0) || im.width / im.height > 1.6) continue;
     var overlap = Math.min(im.left + im.width, box.left + box.width) - Math.max(im.left, box.left);
     if (overlap < 0.6 * Math.min(im.width, box.width)) continue;
@@ -493,6 +493,173 @@ function albumLayout(box, n) {
   }
   return [];
 }
+
+// ---- Google Ads slides: screenshots replaced by a line chart, native tables and the top ad ----
+// Ops of kind gchart / gtable / gad. Everything the script inserts is titled with one of these tags,
+// so the next run finds and replaces its own element instead of looking for the screenshot again.
+
+var GCHART_TAG_PREFIX = 'spark:gchart:';
+var GTABLE_TAG_PREFIX = 'spark:gtable:';
+var GAD_TAG_PREFIX = 'spark:gad:';
+
+function isSparkTitle_(title) {
+  return String(title || '').indexOf('spark:') === 0;
+}
+
+/** Does this shape text satisfy an anchor { label?, matches?, topLeftPicture? }? label = whole text, case-insensitive. */
+function anchorMatchesText_(text, anchor) {
+  if (!anchor) return false;
+  var t = String(text || '').replace(/^[ \t \n\u000b\r]+|[ \t \n\u000b\r]+$/g, '');
+  if (anchor.label) return t.toLowerCase() === String(anchor.label).toLowerCase();
+  if (anchor.matches) return new RegExp(anchor.matches).test(t);
+  return false;
+}
+
+/** Index of the first shape whose text satisfies the anchor, or -1. */
+function findAnchorShape_(texts, anchor) {
+  for (var i = 0; i < texts.length; i++) if (anchorMatchesText_(texts[i], anchor)) return i;
+  return -1;
+}
+
+/** Elements ({title, left, top, width, height}) this script tagged for an op: the tag itself or "<tag>:<part>". */
+function taggedElements_(elements, tag) {
+  return elements.filter(function (e) {
+    var t = String(e.title || '');
+    return t === tag || t.indexOf(tag + ':') === 0;
+  });
+}
+
+/** Smallest box that holds all the given boxes, or null. */
+function unionBox_(boxes) {
+  if (!boxes || !boxes.length) return null;
+  var left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  boxes.forEach(function (b) {
+    left = Math.min(left, b.left); top = Math.min(top, b.top);
+    right = Math.max(right, b.left + b.width); bottom = Math.max(bottom, b.top + b.height);
+  });
+  return { left: left, top: top, width: right - left, height: bottom - top };
+}
+
+/**
+ * The team's screenshot under a label ("Demographics", "Campaign", "Most clicked ad"): the nearest picture that starts at or
+ * below the label's top and overlaps the label horizontally (at least 50% of the label width, or starts within 60 pt of its
+ * left edge). Pictures this script made (any spark: title) are never picked. Boxes {left, top, width, height}.
+ */
+function pickScreenshotBelow_(label, images) {
+  var best = null;
+  for (var i = 0; i < images.length; i++) {
+    var im = images[i];
+    if (isSparkTitle_(im.title)) continue;
+    if (!(im.width > 0) || !(im.height > 0)) continue;
+    if (im.top < label.top - 4) continue;
+    var overlap = Math.min(im.left + im.width, label.left + label.width) - Math.max(im.left, label.left);
+    var startsNear = Math.abs(im.left - label.left) <= 60;
+    if (!(overlap >= 0.5 * label.width) && !startsNear) continue;
+    if (!best || im.top < best.top) best = im;
+  }
+  return best;
+}
+
+/**
+ * The KPI + daily-line screenshot under the title: a picture this script tagged earlier, otherwise the top-left-most untagged
+ * picture that is big enough (>= 25% of the page width, >= 15% of its height) and centred in the left 65% of the page.
+ */
+function pickTopLeftPicture_(images, page, tag) {
+  var i;
+  for (i = 0; i < images.length; i++) if (images[i].title === tag) return images[i];
+  var best = null;
+  for (i = 0; i < images.length; i++) {
+    var im = images[i];
+    if (isSparkTitle_(im.title)) continue;
+    if (im.width < 0.25 * page.width || im.height < 0.15 * page.height) continue;
+    if (im.left + im.width / 2 > 0.65 * page.width) continue;
+    if (!best || im.top < best.top - 5 || (Math.abs(im.top - best.top) < 5 && im.left < best.left)) best = im;
+  }
+  return best;
+}
+
+/** Table frame for a box: column widths share the width by content weight (first column gets more), font size follows row height. */
+function tableGeometry_(box, rows, header) {
+  var all = (header && header.length ? [header] : []).concat(rows || []);
+  var cols = 0;
+  all.forEach(function (r) { cols = Math.max(cols, r.length); });
+  if (!cols) return { cols: 0, rows: 0, colWidths: [], fontSize: 9, rowHeight: 0 };
+  var weights = [];
+  for (var c = 0; c < cols; c++) {
+    var longest = 0;
+    all.forEach(function (r) { longest = Math.max(longest, String(r[c] === undefined ? '' : r[c]).length); });
+    // text columns (first) up to 40 chars of weight, number columns up to 14, each at least 4
+    weights.push(Math.max(4, Math.min(c === 0 ? 40 : 14, longest)));
+  }
+  var total = weights.reduce(function (a, b) { return a + b; }, 0);
+  var colWidths = weights.map(function (w) { return Math.round((box.width * w / total) * 10) / 10; });
+  var rowCount = all.length;
+  var rowHeight = box.height / rowCount;
+  var fontSize = Math.max(7, Math.min(11, Math.floor(rowHeight * 0.5)));
+  return { cols: cols, rows: rowCount, colWidths: colWidths, fontSize: fontSize, rowHeight: rowHeight };
+}
+
+/** White (share 0) to Google blue (share 1). Returns '#RRGGBB'. */
+function heatColor_(share) {
+  var s = Math.max(0, Math.min(1, Number(share) || 0));
+  var from = [255, 255, 255];
+  var to = [66, 133, 244];
+  var hex = function (v) { var h = Math.round(v).toString(16); return h.length < 2 ? '0' + h : h; };
+  return ('#' + [0, 1, 2].map(function (i) { return hex(from[i] + (to[i] - from[i]) * s); }).join('')).toUpperCase();
+}
+
+/** Dark text on pale cells, white text on strong cells (share 0..1). */
+function heatTextColor_(share) {
+  return Number(share) > 0.6 ? '#FFFFFF' : '#202124';
+}
+
+/** Largest rectangle of the picture's aspect that fits inside box, centred. */
+function fitInside_(box, w, h) {
+  if (!(w > 0) || !(h > 0)) return { left: box.left, top: box.top, width: box.width, height: box.height };
+  var scale = Math.min(box.width / w, box.height / h);
+  var nw = w * scale;
+  var nh = h * scale;
+  return { left: box.left + (box.width - nw) / 2, top: box.top + (box.height - nh) / 2, width: nw, height: nh };
+}
+
+/** "Most clicked ad" area: picture/text on the left half, stats table on the right half, 8 pt gutter. */
+function adLayout_(box) {
+  var gap = 8;
+  var half = (box.width - gap) / 2;
+  return {
+    left: { left: box.left, top: box.top, width: half, height: box.height },
+    right: { left: box.left + half + gap, top: box.top, width: half, height: box.height }
+  };
+}
+
+/**
+ * The line under Demographics ("…ส่วนใหญ่เป็น" + a second line "กลุ่ม… (9 Conversion)"): only the part after the marker is
+ * replaced, the team's first line stays. Returns { start, end, oldText, newText } or null when the text has no marker.
+ */
+var CAPTION_MARKER = 'ส่วนใหญ่เป็น';
+function planCaptionEdit_(text, caption) {
+  var at = text.indexOf(CAPTION_MARKER);
+  var cat = String(caption || '').indexOf(CAPTION_MARKER);
+  if (at < 0 || cat < 0) return null;
+  var rest = String(caption).slice(cat + CAPTION_MARKER.length).replace(/^[ \t ]+|[ \t ]+$/g, '');
+  if (!rest) return null;
+  var lines = splitLines_(text);
+  var markerLine = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (at >= lines[i].start && at <= lines[i].contentEnd) { markerLine = i; break; }
+  }
+  if (markerLine < 0) return null;
+  // the next non-empty line holds the group + number; without one, the value follows the marker on the same line
+  for (var j = markerLine + 1; j < lines.length; j++) {
+    if (lines[j].contentEnd > lines[j].start) {
+      return { start: lines[j].start, end: lines[j].contentEnd, oldText: text.slice(lines[j].start, lines[j].contentEnd), newText: rest };
+    }
+  }
+  var from = at + CAPTION_MARKER.length;
+  var end = lines[markerLine].contentEnd;
+  return { start: from, end: end, oldText: text.slice(from, end), newText: ' ' + rest };
+}
+
 
 // ---- Pull mode: fetch the latest complete report from ConversionFactor instead of pasting JSON ----
 
@@ -538,5 +705,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_, GCHART_TAG_PREFIX: GCHART_TAG_PREFIX, GTABLE_TAG_PREFIX: GTABLE_TAG_PREFIX, GAD_TAG_PREFIX: GAD_TAG_PREFIX, anchorMatchesText_: anchorMatchesText_, findAnchorShape_: findAnchorShape_, taggedElements_: taggedElements_, unionBox_: unionBox_, pickScreenshotBelow_: pickScreenshotBelow_, pickTopLeftPicture_: pickTopLeftPicture_, tableGeometry_: tableGeometry_, heatColor_: heatColor_, heatTextColor_: heatTextColor_, fitInside_: fitInside_, adLayout_: adLayout_, planCaptionEdit_: planCaptionEdit_ };
 }

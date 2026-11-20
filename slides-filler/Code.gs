@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.6-album-pictures-2026-11-20';
+var SCRIPT_VERSION = 'v4.7-google-visuals-2026-11-20';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -77,11 +77,11 @@ function previewLatest(periodEnd) {
 }
 
 /** Step 2: fetch that exact snapshot again and fill the deck. */
-function applyLatest(snapshotId, force, withCharts, withImages) {
+function applyLatest(snapshotId, force, withCharts, withImages, withGoogle) {
   // never fall back to "latest": that could fill a different period than the one the person checked
   if (!snapshotId) throw new Error('ไม่ได้รหัสรายงานจากขั้นตอนตรวจ — กดตรวจรายงานที่จะใช้อีกครั้งก่อนยืนยัน');
   var r = fetchExport_({ snapshotId: snapshotId });
-  return applyPayloadObject_(r.payload, force, withCharts, withImages);
+  return applyPayloadObject_(r.payload, force, withCharts, withImages, withGoogle);
 }
 
 function showFillDialog() {
@@ -98,6 +98,9 @@ function collectTables_(elements, pageW, pageH, out) {
     if (type === SlidesApp.PageElementType.GROUP) {
       collectTables_(el.asGroup().getChildren(), pageW, pageH, out);
     } else if (type === SlidesApp.PageElementType.TABLE) {
+      var tableTitle = '';
+      try { tableTitle = el.getTitle() || ''; } catch (e) {}
+      if (isSparkTitle_(tableTitle)) continue; // tables this script inserted (Google Ads slides) are not the team's summary tables
       var left = el.getLeft();
       var top = el.getTop();
       var outside = isFinite(left) && isFinite(top) && (left >= pageW || left + el.getWidth() <= 0 || top >= pageH || top + el.getHeight() <= 0);
@@ -476,6 +479,215 @@ function applyImageOp_(op, slide, counts, problems) {
   counts.images++;
 }
 
+// ---- Google Ads slides (gchart / gtable / gad): screenshots of the Google Ads UI replaced by drawn visuals ----
+
+function pageElementBoxes_(slide) {
+  return slide.page.getPageElements().map(function (el) {
+    var title = '';
+    try { title = el.getTitle() || ''; } catch (e) {}
+    return { el: el, title: title, left: el.getLeft(), top: el.getTop(), width: el.getWidth(), height: el.getHeight() };
+  });
+}
+
+function removeBoxes_(boxes) {
+  for (var i = 0; i < boxes.length; i++) { try { boxes[i].el.remove(); } catch (e) {} }
+}
+
+function shapeBox_(shape) {
+  return { left: shape.getLeft(), top: shape.getTop(), width: shape.getWidth(), height: shape.getHeight() };
+}
+
+/** Where does a Google op put its visual? Our own element from the last run (found by tag), else the team's screenshot. */
+function locateGoogleTarget_(op, slide, tag) {
+  var boxes = pageElementBoxes_(slide);
+  var mine = taggedElements_(boxes, tag);
+  if (mine.length) return { box: unionBox_(mine), remove: mine };
+  var images = boxes.filter(function (b) { return b.el.getPageElementType() === SlidesApp.PageElementType.IMAGE; });
+  var pic = null;
+  if (op.anchor && op.anchor.topLeftPicture) {
+    var pres = SlidesApp.getActivePresentation();
+    pic = pickTopLeftPicture_(images, { width: pres.getPageWidth(), height: pres.getPageHeight() }, tag);
+    if (!pic) return { error: 'ไม่พบภาพแคปหน้าจอที่มุมซ้ายบน' };
+  } else {
+    var idx = findAnchorShape_(slide.texts, op.anchor);
+    if (idx < 0) return { error: 'ไม่พบหัวข้อ "' + (op.anchor.label || op.anchor.matches) + '"' };
+    pic = pickScreenshotBelow_(shapeBox_(slide.shapes[idx]), images);
+    if (!pic) return { error: 'พบหัวข้อ "' + (op.anchor.label || op.anchor.matches) + '" แต่ไม่พบภาพแคปหน้าจอใต้หัวข้อ' };
+  }
+  return { box: { left: pic.left, top: pic.top, width: pic.width, height: pic.height }, remove: [pic], picture: pic };
+}
+
+/** Line chart (Charts service) as a PNG blob. Series with axis 1 use the right-hand scale. */
+function drawLineChartBlob_(op, width, height) {
+  var font = Math.max(11, Math.round(width / 46));
+  var data = Charts.newDataTable().addColumn(Charts.ColumnType.STRING, 'Date');
+  op.series.forEach(function (s) { data.addColumn(Charts.ColumnType.NUMBER, s.name); });
+  op.categories.forEach(function (c, i) {
+    var row = [c];
+    op.series.forEach(function (s) { row.push(s.values[i] || 0); });
+    data.addRow(row);
+  });
+  var seriesOpt = {};
+  op.series.forEach(function (s, i) { seriesOpt[i] = { targetAxisIndex: s.axis === 1 ? 1 : 0 }; });
+  var chart = Charts.newLineChart()
+    .setDataTable(data.build())
+    .setColors(op.series.map(function (s) { return s.color; }))
+    .setDimensions(width, height)
+    .setTitle(op.title)
+    .setOption('titleTextStyle', { fontSize: Math.max(12, Math.round(width / 40)) })
+    .setOption('legend', { position: 'bottom', textStyle: { fontSize: Math.max(10, Math.round(width / 54)) } })
+    .setOption('hAxis', { textStyle: { fontSize: font }, showTextEvery: Math.max(1, Math.ceil(op.categories.length / 8)) })
+    .setOption('series', seriesOpt)
+    .setOption('vAxes', { 0: { textStyle: { fontSize: font }, minValue: 0 }, 1: { textStyle: { fontSize: font }, minValue: 0 } })
+    .setOption('lineWidth', 3)
+    .build();
+  return chart.getAs('image/png');
+}
+
+/** KPI + daily line: replace the screenshot under the title with a drawn line chart, tagged for the next run. */
+function applyGoogleChartOp_(op, slide, counts, problems) {
+  var tag = GCHART_TAG_PREFIX + op.id;
+  var target = locateGoogleTarget_(op, slide, tag);
+  if (target.error) { counts.not_found++; problems.push(op.id + ': หน้า ' + slide.number + ' ' + target.error + ' (ไม่แตะรูปเดิม)'); return; }
+  var size = chartPixelSize(target.box.width, target.box.height);
+  var blob = drawLineChartBlob_(op, size.width, size.height);
+  var existing = target.remove[0];
+  if (existing.el.getPageElementType() === SlidesApp.PageElementType.IMAGE) {
+    var image = existing.el.asImage();
+    image.replace(blob, false);
+    image.setTitle(tag);
+  } else {
+    var inserted = slide.page.insertImage(blob, target.box.left, target.box.top, target.box.width, target.box.height);
+    inserted.setTitle(tag);
+    removeBoxes_(target.remove);
+  }
+  counts.filled++;
+  counts.google_charts++;
+}
+
+/**
+ * Native table at (left, top, width, height). header = array or null (then every row is data). opts: boldLast, heat
+ * (same shape as rows, share 0..1 or null per body cell). Returns the Table.
+ */
+function insertGridTable_(page, box, header, rows, opts) {
+  opts = opts || {};
+  var hasHeader = !!(header && header.length);
+  var all = (hasHeader ? [header] : []).concat(rows);
+  var geo = tableGeometry_(box, rows, hasHeader ? header : null);
+  var table = page.insertTable(geo.rows, geo.cols, box.left, box.top, box.width, box.height);
+  for (var c = 0; c < geo.cols; c++) {
+    try { table.getColumn(c).setWidth(geo.colWidths[c]); } catch (e) {}
+  }
+  for (var r = 0; r < all.length; r++) {
+    for (var k = 0; k < geo.cols; k++) {
+      var cell = table.getCell(r, k);
+      var value = all[r][k] === undefined ? '' : String(all[r][k]);
+      var text = cell.getText();
+      text.setText(value);
+      var style = text.getTextStyle();
+      var isHeader = hasHeader && r === 0;
+      var bodyIndex = r - (hasHeader ? 1 : 0);
+      style.setFontSize(geo.fontSize).setForegroundColor('#202124');
+      style.setBold(isHeader || (!!opts.boldLast && r === all.length - 1) || (!hasHeader && k === 0));
+      if (k > 0 && !(!hasHeader && geo.cols === 2)) {
+        try { text.getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.END); } catch (e) {}
+      }
+      try {
+        if (isHeader) {
+          cell.getFill().setSolidFill('#F1F3F4');
+        } else if (opts.heat && opts.heat[bodyIndex] && opts.heat[bodyIndex][k] !== null && opts.heat[bodyIndex][k] !== undefined) {
+          var share = opts.heat[bodyIndex][k];
+          cell.getFill().setSolidFill(heatColor_(share));
+          style.setForegroundColor(heatTextColor_(share));
+        } else {
+          cell.getFill().setSolidFill('#FFFFFF');
+        }
+      } catch (e) {}
+    }
+  }
+  return table;
+}
+
+function tagElement_(el, tag, problems, id) {
+  try { el.setTitle(tag); }
+  catch (e) { problems.push(id + ': ตั้งชื่อ (tag) ให้ตารางไม่ได้ — รอบหน้าจะหาตารางเดิมไม่เจอ (' + e.message + ')'); }
+}
+
+/** Demographics / Campaign: native table at the screenshot's bounds, then the screenshot goes. */
+function applyGoogleTableOp_(op, slide, props, force, counts, problems) {
+  var tag = GTABLE_TAG_PREFIX + op.id;
+  var target = locateGoogleTarget_(op, slide, tag);
+  if (target.error) { counts.not_found++; problems.push(op.id + ': หน้า ' + slide.number + ' ' + target.error + ' (ไม่แตะรูปเดิม)'); return; }
+  var table = insertGridTable_(slide.page, target.box, op.header, op.rows, { heat: op.heat, boldLast: op.boldLastRow });
+  tagElement_(table, tag, problems, op.id);
+  removeBoxes_(target.remove); // inserted first, so a failure above never loses the team's picture
+  counts.filled++;
+  counts.google_tables++;
+  if (op.caption) applyGoogleCaption_(op, slide, props, force, counts, problems);
+}
+
+// The one-sentence line under Demographics ("…ส่วนใหญ่เป็น" + group and number): only when that anchor text is on the slide
+function applyGoogleCaption_(op, slide, props, force, counts, problems) {
+  for (var i = 0; i < slide.shapes.length; i++) {
+    var text = slide.texts[i];
+    var edit = planCaptionEdit_(text, op.caption);
+    if (!edit) continue;
+    var key = PROP_PREFIX + op.id + '#caption';
+    var decision = decideFill(edit.oldText, edit.newText, props.getProperty(key), !!force);
+    if (decision === 'fill') {
+      replaceRange_(slide.shapes[i], edit, null);
+      counts.filled++;
+      props.setProperty(key, edit.newText);
+    } else if (decision === 'unchanged') {
+      counts.unchanged++;
+      props.setProperty(key, edit.newText);
+    } else {
+      counts.skipped_edited++;
+      problems.push(op.id + ': ประโยคใต้ Demographics ทีมแก้ไว้แล้ว (ข้าม) หน้า ' + slide.number);
+    }
+    return;
+  }
+}
+
+/** Most clicked ad: left half = the ad picture (or a headline/description table), right half = Status · Conversions · Clicks · CTR. */
+function applyGoogleAdOp_(op, slide, counts, problems) {
+  var tag = GAD_TAG_PREFIX + op.id;
+  var target = locateGoogleTarget_(op, slide, tag);
+  if (target.error) { counts.not_found++; problems.push(op.id + ': หน้า ' + slide.number + ' ' + target.error + ' (ไม่แตะรูปเดิม)'); return; }
+
+  // download first: a failed picture must not cost the team's screenshot (the text table is the fallback)
+  var blob = null;
+  if (op.imageUrl) {
+    try {
+      var res = UrlFetchApp.fetch(op.imageUrl, { muteHttpExceptions: true, followRedirects: true });
+      if (res.getResponseCode() !== 200) throw new Error('HTTP ' + res.getResponseCode());
+      blob = res.getBlob();
+    } catch (e) {
+      counts.images_failed++;
+      problems.push(op.id + ': โหลดรูปโฆษณาไม่ได้ (' + e.message + ')' + (op.text ? ' — ใช้ข้อความแทน' : ' — คงรูปเดิมไว้'));
+    }
+  }
+  if (!blob && !op.text) return;
+
+  var layout = adLayout_(target.box);
+  if (blob) {
+    var added = slide.page.insertImage(blob);
+    var fit = fitInside_(layout.left, added.getWidth(), added.getHeight());
+    added.setLeft(fit.left).setTop(fit.top).setWidth(fit.width).setHeight(fit.height);
+    added.setTitle(tag + ':img');
+  } else {
+    var textRows = [['Headline', op.text.headline], ['Description', op.text.description || '-']];
+    var textTable = insertGridTable_(slide.page, { left: layout.left.left, top: layout.left.top, width: layout.left.width, height: Math.min(layout.left.height, 70) }, null, textRows, {});
+    tagElement_(textTable, tag + ':text', problems, op.id);
+  }
+  var statsHeight = Math.min(layout.right.height, 50);
+  var stats = insertGridTable_(slide.page, { left: layout.right.left, top: layout.right.top, width: layout.right.width, height: statsHeight }, op.header, [op.row], {});
+  tagElement_(stats, tag + ':stats', problems, op.id);
+  removeBoxes_(target.remove);
+  counts.filled++;
+  counts.google_ads++;
+}
+
 function applyTextEdits_(shape, edits, props, force, counts, problems, opts) {
   for (var e = edits.length - 1; e >= 0; e--) {
     var ed = edits[e];
@@ -544,13 +756,13 @@ function applyLinesOp_(op, slide, props, force, counts, problems) {
   }
 }
 
-function applyPayload(jsonText, force, withCharts, withImages) {
+function applyPayload(jsonText, force, withCharts, withImages, withGoogle) {
   var payload = JSON.parse(jsonText);
   if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
-  return applyPayloadObject_(payload, force, withCharts, withImages);
+  return applyPayloadObject_(payload, force, withCharts, withImages, withGoogle);
 }
 
-function applyPayloadObject_(payload, force, withCharts, withImages) {
+function applyPayloadObject_(payload, force, withCharts, withImages, withGoogle) {
 
   // Remembered values: read once, collect writes, save once at the end (hundreds of single calls made the run very slow)
   var docProps = PropertiesService.getDocumentProperties();
@@ -565,17 +777,18 @@ function applyPayloadObject_(payload, force, withCharts, withImages) {
   };
   var slideCache = {};
   var index = buildIndex_();
-  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0, charts: 0, charts_skipped: 0, images: 0, images_skipped: 0, images_failed: 0 };
+  var counts = { filled: 0, unchanged: 0, skipped_edited: 0, not_found: 0, charts: 0, charts_skipped: 0, images: 0, images_skipped: 0, images_failed: 0, google_charts: 0, google_tables: 0, google_ads: 0, google_skipped: 0 };
   var problems = [];
   var debugShown = false;
 
   try {
   for (var i = 0; i < payload.fills.length; i++) {
     var op = payload.fills[i];
-    if (op.kind && op.kind !== 'image' && op.kind !== 'chart' && op.kind !== 'table' && op.kind !== 'lines') {
+    if (op.kind && op.kind !== 'image' && op.kind !== 'chart' && op.kind !== 'table' && op.kind !== 'lines' && op.kind !== 'gchart' && op.kind !== 'gtable' && op.kind !== 'gad') {
       problems.push(op.id + ': ชนิดคำสั่ง "' + op.kind + '" ไม่รองรับในสคริปต์เวอร์ชันนี้');
       continue;
     }
+    if ((op.kind === 'gchart' || op.kind === 'gtable' || op.kind === 'gad') && !withGoogle) { counts.google_skipped++; continue; }
     if (op.kind === 'table' && !op.slide) {
       var any = false;
       for (var si = 0; si < index.length; si++) {
@@ -602,6 +815,24 @@ function applyPayloadObject_(payload, force, withCharts, withImages) {
       if (!withImages) { counts.images_skipped++; continue; }
       try { applyImageOp_(op, slide, counts, problems); }
       catch (e) { counts.images_failed++; problems.push(op.id + ': ใส่รูปไม่สำเร็จ — ' + e.message); }
+      continue;
+    }
+
+    if (op.kind === 'gchart') {
+      try { applyGoogleChartOp_(op, slide, counts, problems); }
+      catch (e) { counts.not_found++; problems.push(op.id + ': วาดกราฟ Google Ads ไม่สำเร็จ — ' + e.message); }
+      continue;
+    }
+
+    if (op.kind === 'gtable') {
+      try { applyGoogleTableOp_(op, slide, props, force, counts, problems); }
+      catch (e) { counts.not_found++; problems.push(op.id + ': สร้างตาราง Google Ads ไม่สำเร็จ — ' + e.message); }
+      continue;
+    }
+
+    if (op.kind === 'gad') {
+      try { applyGoogleAdOp_(op, slide, counts, problems); }
+      catch (e) { counts.not_found++; problems.push(op.id + ': ใส่โฆษณา Google Ads ไม่สำเร็จ — ' + e.message); }
       continue;
     }
 
