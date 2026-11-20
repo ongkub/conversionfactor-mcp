@@ -344,6 +344,22 @@ test('creative pictures: the picture above each rank box, tagged ones first, cha
   assert.equal(core.pickCreativeImage_(box1, [{ left: 793, top: 100, width: 125, height: 50, title: '' }], 'x'), null);
 });
 
+test('albumLayout: two tiles split horizontally with a 2pt gutter', () => {
+  assert.deepEqual(core.albumLayout({ left: 10, top: 20, width: 102, height: 80 }, 2), [
+    { left: 10, top: 20, width: 50, height: 80 },
+    { left: 62, top: 20, width: 50, height: 80 },
+  ]);
+});
+
+test('albumLayout: three tiles use a 60% top image and two bottom halves', () => {
+  const tiles = core.albumLayout({ left: 10, top: 20, width: 102, height: 102 }, 3);
+  assert.deepEqual(tiles, [
+    { left: 10, top: 20, width: 102, height: 60 },
+    { left: 10, top: 82, width: 50, height: 40 },
+    { left: 62, top: 82, width: 50, height: 40 },
+  ]);
+});
+
 test('headerValue_ finds a header whatever its case', () => {
   assert.equal(core.headerValue_({ 'x-report-snapshot-id': 'abc' }, 'X-Report-Snapshot-Id'), 'abc');
   assert.equal(core.headerValue_({ 'X-Report-Snapshot-Id': 'abc' }, 'x-report-snapshot-id'), 'abc');

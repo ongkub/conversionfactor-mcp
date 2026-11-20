@@ -471,6 +471,29 @@ function pickCreativeImage_(box, images, tag) {
   return best;
 }
 
+/** Tile geometry for a two or three picture album, with a 2 pt gutter. */
+function albumLayout(box, n) {
+  var gap = 2;
+  if (n === 2) {
+    var half = (box.width - gap) / 2;
+    return [
+      { left: box.left, top: box.top, width: half, height: box.height },
+      { left: box.left + half + gap, top: box.top, width: half, height: box.height }
+    ];
+  }
+  if (n === 3) {
+    var topHeight = (box.height - gap) * 0.6;
+    var bottomHeight = box.height - gap - topHeight;
+    var halfWidth = (box.width - gap) / 2;
+    return [
+      { left: box.left, top: box.top, width: box.width, height: topHeight },
+      { left: box.left, top: box.top + topHeight + gap, width: halfWidth, height: bottomHeight },
+      { left: box.left + halfWidth + gap, top: box.top + topHeight + gap, width: halfWidth, height: bottomHeight }
+    ];
+  }
+  return [];
+}
+
 // ---- Pull mode: fetch the latest complete report from ConversionFactor instead of pasting JSON ----
 
 var EXPORT_BASE_URL = 'https://conversion.sparkth.io';
@@ -515,5 +538,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

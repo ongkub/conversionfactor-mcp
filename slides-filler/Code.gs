@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.5-branch-images-2026-11-20';
+var SCRIPT_VERSION = 'v4.6-album-pictures-2026-11-20';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -157,7 +157,7 @@ function buildIndex_() {
     collectImages_(slide.getPageElements(), w, h, images);
     // Read every text once: finding a slide for each of ~200 ops would otherwise re-read the whole deck each time
     var texts = shapes.map(function (sh) { try { return sh.getText().asString(); } catch (e) { return ''; } });
-    return { number: i + 1, shapes: shapes, shapePositions: shapePositions, texts: texts, tables: tables, images: images };
+    return { number: i + 1, page: slide, shapes: shapes, shapePositions: shapePositions, texts: texts, tables: tables, images: images };
   });
 }
 
@@ -415,11 +415,58 @@ function applyImageOp_(op, slide, counts, problems) {
   });
   var target = pickCreativeImage_(box, images, tag);
   if (!target) { counts.not_found++; problems.push(op.id + ': พบกล่องอันดับ ' + op.rank + ' หน้า ' + slide.number + ' แต่ไม่พบรูปเหนือกล่อง'); return; }
+  var urls = op.urls && op.urls.length >= 2 ? op.urls.slice(0, 3) : null;
+  var blobs = [];
+  if (urls) {
+    try {
+      for (var u = 0; u < urls.length; u++) {
+        var albumRes = UrlFetchApp.fetch(urls[u], { muteHttpExceptions: true, followRedirects: true });
+        if (albumRes.getResponseCode() !== 200) throw new Error('HTTP ' + albumRes.getResponseCode());
+        blobs.push(albumRes.getBlob());
+      }
+    } catch (albumError) {
+      urls = null;
+      blobs = [];
+    }
+  }
   // Meta's links expire: a failed download only skips this picture (the old one stays)
-  var res = UrlFetchApp.fetch(op.url, { muteHttpExceptions: true, followRedirects: true });
-  if (res.getResponseCode() !== 200) {
+  var res = null;
+  if (!urls) {
+    res = UrlFetchApp.fetch(op.urls && op.urls.length ? op.urls[0] : op.url, { muteHttpExceptions: true, followRedirects: true });
+  }
+  if (res && res.getResponseCode() !== 200) {
     counts.images_failed++;
     problems.push(op.id + ': โหลดรูปไม่ได้ (รหัส ' + res.getResponseCode() + ' — ลิงก์อาจหมดอายุ สร้างรายงานใหม่แล้วเติมทันที) คงรูปเดิมไว้');
+    return;
+  }
+  if (urls) {
+    var pageElements = slide.page.getPageElements();
+    for (var pe = pageElements.length - 1; pe >= 0; pe--) {
+      var oldTitle = '';
+      try { oldTitle = pageElements[pe].getTitle() || ''; } catch (e) {}
+      if (oldTitle.indexOf(tag + ':') === 0) pageElements[pe].remove();
+    }
+    var tiles = albumLayout(target, urls.length);
+    var image = target.el.asImage();
+    image.replace(blobs[0], true);
+    image.setLeft(tiles[0].left).setTop(tiles[0].top).setWidth(tiles[0].width).setHeight(tiles[0].height);
+    image.setTitle(tag);
+    for (var a = 1; a < urls.length; a++) {
+      var tile = tiles[a];
+      var added = slide.page.insertImage(blobs[a], tile.left, tile.top, tile.width, tile.height);
+      added.setTitle(tag + ':' + a);
+    }
+    if (op.more > 0) {
+      var last = tiles[tiles.length - 1];
+      var overlay = slide.page.insertTextBox('+' + op.more, last.left, last.top, last.width, last.height);
+      overlay.setTitle(tag + ':more');
+      overlay.getText().getTextStyle().setForegroundColor('#FFFFFF').setBold(true).setFontSize(28);
+      overlay.getText().getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.CENTER);
+      overlay.setContentAlignment(SlidesApp.ContentAlignment.MIDDLE);
+      overlay.getFill().setSolidFill('#000000', 0.45);
+    }
+    counts.filled++;
+    counts.images++;
     return;
   }
   var image = target.el.asImage();
