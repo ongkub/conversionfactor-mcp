@@ -658,7 +658,7 @@ test('topTextIndex_: picks highest non-empty text, tie within 3pt prefers smalle
   assert.strictEqual(core.topTextIndex_([], []), -1);
 });
 
-test('demographicBars_: builds title, labels with percentage, and parsed numeric values', () => {
+test('demographicBars_: builds title, short labels with percentage, groups, and parsed numeric values', () => {
   const bars = core.demographicBars_({
     header: ['กลุ่ม', 'Conversions', 'สัดส่วน'],
     rows: [
@@ -669,9 +669,68 @@ test('demographicBars_: builds title, labels with percentage, and parsed numeric
   });
   assert.deepStrictEqual(bars, {
     title: 'Conversions',
-    labels: ['อายุ 25-34 (26%)', 'อายุ 35-44 (12%)', 'ไม่ทราบ (0%)'],
+    labels: ['25-34 · 26%', '35-44 · 12%', 'ไม่ทราบ · 0%'],
     values: [9867, 1234.5, 0],
+    groups: ['age', 'age', 'age'],
   });
+});
+
+test('demographicBars_: age/gender prefix rules, ไม่ระบุ preserved, and missing share omitted', () => {
+  const bars = core.demographicBars_({
+    header: ['กลุ่ม', 'Clicks', 'สัดส่วน'],
+    rows: [
+      ['อายุ 25-34', '340', '34%'],
+      ['เพศ ชาย', '550', '55%'],
+      ['อายุ ไม่ระบุ', '80', '8%'],
+      ['เพศ ไม่ระบุ', '80', '8%'],
+      ['อายุ 18-24', '20', ''],
+    ],
+  });
+  assert.deepStrictEqual(bars.labels, [
+    '25-34 · 34%',
+    'ชาย · 55%',
+    'อายุ ไม่ระบุ · 8%',
+    'เพศ ไม่ระบุ · 8%',
+    '18-24',
+  ]);
+  assert.deepStrictEqual(bars.groups, ['age', 'gender', 'age', 'gender', 'age']);
+});
+
+test('barLabelFontPx_: scales by height and row count, clamped to 9..16', () => {
+  assert.strictEqual(core.barLabelFontPx_(150, 10), 10);
+  assert.strictEqual(core.barLabelFontPx_(40, 10), 9);
+  assert.strictEqual(core.barLabelFontPx_(800, 4), 16);
+});
+
+test('visualLength_: drops Thai combining marks and keeps Latin unchanged', () => {
+  assert.strictEqual(core.visualLength_('เมทัลชีท'), 6);
+  assert.strictEqual(core.visualLength_('Search-Tier 1&2'), 15);
+  assert.strictEqual(core.visualLength_(''), 0);
+});
+
+test('fitTableText_: fits roomy box at 11, shrinks for short box, truncates first column at 7 for impossible box', () => {
+  const header = ['Campaign', 'Conv.', 'Cost'];
+  const shortRows = [['Search', '100', '฿500'], ['Total', '100', '฿500']];
+  const roomy = core.fitTableText_({ left: 0, top: 0, width: 450, height: 200 }, header, shortRows);
+  assert.strictEqual(roomy.fontSize, 11);
+  assert.deepStrictEqual(roomy.rows, shortRows);
+
+  const mediumRows = [['GMB Tier 1 (ชลบุรี, นครปฐม, ระยอง, สมุทรปราการ)', '120', '฿660'], ['Total', '120', '฿660']];
+  const smaller = core.fitTableText_({ left: 0, top: 0, width: 300, height: 75 }, header, mediumRows);
+  assert.strictEqual(smaller.fontSize, 8);
+  assert.deepStrictEqual(smaller.rows, mediumRows);
+
+  const longName = 'GMB แสงไทย Tier2 (นครราชสีมา, เชียงใหม่ - ลำพูน, ขอนแก่น,อุดรธานี, สุรินทร์))';
+  const origRows = [[longName, '120', '฿660'], ['Total', '120', '฿660']];
+  const impossible = core.fitTableText_({ left: 0, top: 0, width: 240, height: 30 }, header, origRows);
+  assert.strictEqual(impossible.fontSize, 7);
+  assert.ok(impossible.rows[0][0].endsWith('…'));
+  assert.ok(core.visualLength_(impossible.rows[0][0]) <= 36);
+  assert.strictEqual(impossible.rows[0][1], '120');
+  assert.strictEqual(impossible.rows[0][2], '฿660');
+  assert.deepStrictEqual(impossible.rows[1], ['Total', '120', '฿660']);
+  assert.deepStrictEqual(header, ['Campaign', 'Conv.', 'Cost']);
+  assert.strictEqual(origRows[0][0], longName);
 });
 
 test('fitFontSize_: picks largest fitting integer 14..7, falls back to 7', () => {
@@ -701,4 +760,12 @@ test('orderProblems_: real problems first, skips moved to end and collapsed afte
   assert.strictEqual(ordered[9], skips[7]);
   assert.strictEqual(ordered[10], '…และข้ามจุดที่ทีมแก้ไว้อีก 3 จุด (ติ๊ก "ทับกล่องที่ทีมแก้ไว้ด้วย" ถ้าต้องการให้ทับ)');
   assert.strictEqual(core.orderProblems_(input, 5).length, 5);
+});
+
+test('pickCreativeImage_: a landscape picture (about 2:1) above the rank box is picked; a wide strip is not', () => {
+  const box = { left: 100, top: 300, width: 130, height: 80 };
+  const landscape = { title: '', left: 100, top: 234, width: 130, height: 66 };
+  assert.strictEqual(core.pickCreativeImage_(box, [landscape], 'spark:creative:x'), landscape);
+  const strip = { title: '', left: 100, top: 270, width: 130, height: 30 };
+  assert.strictEqual(core.pickCreativeImage_(box, [strip], 'spark:creative:x'), null);
 });

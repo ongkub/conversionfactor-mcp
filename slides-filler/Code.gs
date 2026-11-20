@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.8-google-fit-2026-11-20';
+var SCRIPT_VERSION = 'v4.8.1-google-fit-2026-11-20';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -413,8 +413,8 @@ function applyChartOp_(op, slide, counts, problems) {
 
 /** Replace the picture above a creative's rank box with the ad's picture; tag it so next month finds it. */
 function applyImageOp_(op, slide, counts, problems) {
-  // main campaign boxes say Engagement / Page Like; branch boxes say Message (or Page Like)
-  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page Like|Message)\\s*=');
+  // main campaign boxes say Engagement / Page Like; branch boxes say Message or "Pagelike" (one word)
+  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page\\s*Like|Message)\\s*=', 'i');
   var boxShape = null;
   for (var i = 0; i < slide.shapes.length && !boxShape; i++) if (re.test(slide.texts[i])) boxShape = slide.shapes[i];
   if (!boxShape) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่องอันดับ ' + op.rank); return; }
@@ -549,24 +549,32 @@ function locateGoogleTarget_(op, slide, tag, props) {
         }
       } catch (e) {}
     }
-    if (!storedBox) {
-      var positive = mine.filter(function (b) { return b.width > 0 && b.height > 0; });
-      storedBox = unionBox_(positive);
-    }
-    if (!storedBox) {
-      for (var mi = 0; mi < mine.length; mi++) {
-        if (mine[mi].el.getPageElementType() === SlidesApp.PageElementType.TABLE) {
-          try {
-            var tb = tableBox_(mine[mi].el);
-            if (tb.width > 0 && tb.height > 0) { storedBox = tb; break; }
-          } catch (e) {}
-        }
+    var tableItem = null;
+    for (var mi = 0; mi < mine.length; mi++) {
+      if (mine[mi].el.getPageElementType() === SlidesApp.PageElementType.TABLE) {
+        tableItem = mine[mi];
+        break;
       }
     }
-    if (!storedBox || !(storedBox.width > 0) || !(storedBox.height > 0)) {
+    var resolvedBox = null;
+    if (!tableItem) {
+      var positive = mine.filter(function (b) { return b.width > 0 && b.height > 0; });
+      resolvedBox = unionBox_(positive) || storedBox;
+    } else {
+      var tb = null;
+      try { tb = tableBox_(tableItem.el); } catch (e) {}
+      var tWidth = storedBox ? storedBox.width : (tb ? tb.width : 0);
+      var tHeight = storedBox ? storedBox.height : (tb ? tb.height : 0);
+      var tLeft = tableItem.el.getLeft();
+      var tTop = tableItem.el.getTop();
+      if (tWidth > 0 && tHeight > 0 && isFinite(tLeft) && isFinite(tTop)) {
+        resolvedBox = { left: tLeft, top: tTop, width: tWidth, height: tHeight };
+      }
+    }
+    if (!resolvedBox || !(resolvedBox.width > 0) || !(resolvedBox.height > 0)) {
       return { error: 'กล่องเดิมมีขนาดเป็น 0' };
     }
-    return { box: storedBox, remove: mine };
+    return { box: resolvedBox, remove: mine };
   }
   var images = boxes.filter(function (b) { return b.el.getPageElementType() === SlidesApp.PageElementType.IMAGE; });
   var pic = null;
@@ -620,22 +628,26 @@ function drawLineChartBlob_(op, width, height) {
 
 /** Horizontal bar chart (Charts service) for Demographics as a PNG blob. */
 function drawBarChartBlob_(bars, width, height) {
-  var font = Math.max(11, Math.round(width / 46));
+  var labelFont = barLabelFontPx_(height, bars.labels.length);
+  var valueFont = Math.max(8, labelFont - 2);
   var data = Charts.newDataTable()
     .addColumn(Charts.ColumnType.STRING, 'Group')
-    .addColumn(Charts.ColumnType.NUMBER, bars.title || 'Value');
+    .addColumn(Charts.ColumnType.NUMBER, 'อายุ')
+    .addColumn(Charts.ColumnType.NUMBER, 'เพศ');
   for (var i = 0; i < bars.labels.length; i++) {
-    data.addRow([bars.labels[i], bars.values[i]]);
+    var isGender = bars.groups && bars.groups[i] === 'gender';
+    var val = bars.values[i] || 0;
+    data.addRow([bars.labels[i], isGender ? 0 : val, isGender ? val : 0]);
   }
   var chart = Charts.newBarChart()
     .setDataTable(data.build())
-    .setColors(['#4285F4'])
+    .setColors(['#4285F4', '#F4B400'])
     .setDimensions(width, height)
-    .setTitle(bars.title || '')
     .setLegendPosition(Charts.Position.NONE)
-    .setOption('titleTextStyle', { fontSize: Math.max(12, Math.round(width / 40)) })
-    .setOption('hAxis', { textStyle: { fontSize: font }, minValue: 0 })
-    .setOption('vAxis', { textStyle: { fontSize: font } })
+    .setOption('isStacked', true)
+    .setOption('chartArea', { left: '30%', top: '2%', width: '66%', height: '86%' })
+    .setOption('hAxis', { textStyle: { fontSize: valueFont }, minValue: 0, gridlines: { count: 3 } })
+    .setOption('vAxis', { textStyle: { fontSize: labelFont } })
     .build();
   return chart.getAs('image/png');
 }
@@ -668,8 +680,9 @@ function applyGoogleChartOp_(op, slide, props, counts, problems) {
 function insertGridTable_(page, box, header, rows, opts) {
   opts = opts || {};
   var hasHeader = !!(header && header.length);
-  var all = (hasHeader ? [header] : []).concat(rows);
-  var geo = tableGeometry_(box, rows, hasHeader ? header : null);
+  var fit = fitTableText_(box, hasHeader ? header : null, rows);
+  var all = (hasHeader ? [header] : []).concat(fit.rows);
+  var geo = tableGeometry_(box, fit.rows, hasHeader ? header : null);
   var table = page.insertTable(geo.rows, geo.cols, box.left, box.top, box.width, box.height);
   for (var c = 0; c < geo.cols; c++) {
     try { table.getColumn(c).setWidth(geo.colWidths[c]); } catch (e) {}
@@ -683,7 +696,7 @@ function insertGridTable_(page, box, header, rows, opts) {
       var style = text.getTextStyle();
       var isHeader = hasHeader && r === 0;
       var bodyIndex = r - (hasHeader ? 1 : 0);
-      style.setFontSize(geo.fontSize).setForegroundColor('#202124');
+      style.setFontSize(fit.fontSize).setForegroundColor('#202124');
       style.setBold(isHeader || (!!opts.boldLast && r === all.length - 1) || (!hasHeader && k === 0));
       if (k > 0 && !(!hasHeader && geo.cols === 2)) {
         try { text.getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.END); } catch (e) {}

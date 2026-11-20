@@ -461,7 +461,8 @@ function pickCreativeImage_(box, images, tag) {
     var im = images[i];
     var title = String(im.title || '');
     if (title.indexOf(CHART_TAG_PREFIX) === 0 || title.indexOf(CREATIVE_TAG_PREFIX) === 0 || title.indexOf('spark:g') === 0) continue;
-    if (!(im.height > 0) || im.width / im.height > 1.6) continue;
+    // branch slides use landscape pictures too (about 2:1); wider ones are screenshots or charts
+    if (!(im.height > 0) || im.width / im.height > 2.5) continue;
     var overlap = Math.min(im.left + im.width, box.left + box.width) - Math.max(im.left, box.left);
     if (overlap < 0.6 * Math.min(im.width, box.width)) continue;
     var gap = Math.abs(im.top + im.height - box.top);
@@ -650,6 +651,68 @@ function tableGeometry_(box, rows, header) {
   return { cols: cols, rows: rowCount, colWidths: colWidths, fontSize: fontSize, rowHeight: rowHeight };
 }
 
+var THAI_COMBINING_ = /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/;
+var THAI_COMBINING_G_ = /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/g;
+
+/** Length of text excluding zero-width Thai combining marks. */
+function visualLength_(text) {
+  return String(text === undefined || text === null ? '' : text).replace(THAI_COMBINING_G_, '').length;
+}
+
+function shortenVisual_(text, maxVisual) {
+  var str = String(text === undefined || text === null ? '' : text);
+  if (visualLength_(str) <= maxVisual) return str;
+  var vis = 0;
+  var cut = 0;
+  for (var i = 0; i < str.length; i++) {
+    if (!THAI_COMBINING_.test(str.charAt(i))) {
+      if (vis >= maxVisual) break;
+      vis++;
+    }
+    cut = i + 1;
+  }
+  return str.slice(0, cut) + '…';
+}
+
+/** Pick font size (11..7) so equal-width columns fit inside box.height; at 7, shorten long first-column body cells. */
+function fitTableText_(box, header, rows) {
+  var hasHeader = !!(header && header.length);
+  var bodyRows = rows || [];
+  var all = (hasHeader ? [header] : []).concat(bodyRows);
+  var cols = 0;
+  for (var i = 0; i < all.length; i++) {
+    if (all[i] && all[i].length > cols) cols = all[i].length;
+  }
+  if (!cols) return { fontSize: 11, rows: bodyRows };
+  var colWidth = box.width / cols;
+  var usable = colWidth - 7;
+  for (var s = 11; s >= 7; s--) {
+    var cpl = Math.max(1, Math.floor(usable / (s * 0.55)));
+    var height = 0;
+    for (var r = 0; r < all.length; r++) {
+      var row = all[r] || [];
+      var maxLines = 1;
+      for (var c = 0; c < row.length; c++) {
+        var lines = Math.max(1, Math.ceil(visualLength_(row[c]) / cpl));
+        if (lines > maxLines) maxLines = lines;
+      }
+      height += maxLines * s * 1.25 + 7;
+    }
+    if (height <= box.height) return { fontSize: s, rows: bodyRows };
+  }
+  var cpl7 = Math.max(1, Math.floor(usable / (7 * 0.55)));
+  var maxVis = Math.max(1, 2 * cpl7 - 1);
+  var shortened = [];
+  for (var b = 0; b < bodyRows.length; b++) {
+    var copy = (bodyRows[b] || []).slice();
+    if (copy.length > 0 && copy[0] !== undefined && copy[0] !== null) {
+      copy[0] = shortenVisual_(copy[0], maxVis);
+    }
+    shortened.push(copy);
+  }
+  return { fontSize: 7, rows: shortened };
+}
+
 /** White (share 0) to Google blue (share 1). Returns '#RRGGBB'. */
 function heatColor_(share) {
   var s = Math.max(0, Math.min(1, Number(share) || 0));
@@ -755,23 +818,40 @@ function describePayload(payload) {
 }
 
 
-/** Convert a Demographics gtable op into horizontal bar chart data: { title, labels, values }. */
+/** Convert a Demographics gtable op into horizontal bar chart data: { title, labels, values, groups }. */
 function demographicBars_(op) {
   var header = (op && op.header) ? op.header : [];
   var title = header[1] !== undefined && header[1] !== null ? String(header[1]) : '';
   var rows = (op && op.rows) ? op.rows : [];
   var labels = [];
   var values = [];
+  var groups = [];
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i] || [];
     var name = row[0] === undefined || row[0] === null ? '' : String(row[0]);
+    var group = name.indexOf('เพศ') === 0 ? 'gender' : 'age';
+    var shortName = name;
+    if (name.indexOf('อายุ ') === 0) {
+      var restAge = name.slice(5);
+      if (restAge !== 'ไม่ระบุ') shortName = restAge;
+    } else if (name.indexOf('เพศ ') === 0) {
+      var restGender = name.slice(4);
+      if (restGender !== 'ไม่ระบุ') shortName = restGender;
+    }
     var pct = row[2] === undefined || row[2] === null ? '' : String(row[2]);
-    labels.push(pct ? name + ' (' + pct + ')' : name);
+    labels.push(pct ? shortName + ' · ' + pct : shortName);
+    groups.push(group);
     var raw = String(row[1] === undefined || row[1] === null ? '' : row[1]).replace(/[,฿\s\u00a0]/g, '');
     var num = raw === '' ? 0 : Number(raw);
     values.push(isFinite(num) ? num : 0);
   }
-  return { title: title, labels: labels, values: values };
+  return { title: title, labels: labels, values: values, groups: groups };
+}
+
+/** Label font size (px) for horizontal demographic bars so all rows fit in 86% of chart height. */
+function barLabelFontPx_(heightPx, count) {
+  var c = Math.max(1, count || 0);
+  return Math.max(9, Math.min(16, Math.floor((heightPx * 0.86 / c) * 0.8)));
 }
 
 /** Largest integer font size (14 down to 7) such that wrapped lines fit inside box. */
@@ -823,5 +903,5 @@ function orderProblems_(problems, limit) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_, GCHART_TAG_PREFIX: GCHART_TAG_PREFIX, GTABLE_TAG_PREFIX: GTABLE_TAG_PREFIX, GAD_TAG_PREFIX: GAD_TAG_PREFIX, visibleShare_: visibleShare_, topTextIndex_: topTextIndex_, anchorMatchesText_: anchorMatchesText_, findAnchorShape_: findAnchorShape_, taggedElements_: taggedElements_, unionBox_: unionBox_, pickScreenshotBelow_: pickScreenshotBelow_, pickTopLeftPicture_: pickTopLeftPicture_, tableGeometry_: tableGeometry_, heatColor_: heatColor_, heatTextColor_: heatTextColor_, fitInside_: fitInside_, adLayout_: adLayout_, planCaptionEdit_: planCaptionEdit_, demographicBars_: demographicBars_, fitFontSize_: fitFontSize_, adStatLines_: adStatLines_, orderProblems_: orderProblems_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_, GCHART_TAG_PREFIX: GCHART_TAG_PREFIX, GTABLE_TAG_PREFIX: GTABLE_TAG_PREFIX, GAD_TAG_PREFIX: GAD_TAG_PREFIX, visibleShare_: visibleShare_, topTextIndex_: topTextIndex_, anchorMatchesText_: anchorMatchesText_, findAnchorShape_: findAnchorShape_, taggedElements_: taggedElements_, unionBox_: unionBox_, pickScreenshotBelow_: pickScreenshotBelow_, pickTopLeftPicture_: pickTopLeftPicture_, tableGeometry_: tableGeometry_, visualLength_: visualLength_, fitTableText_: fitTableText_, heatColor_: heatColor_, heatTextColor_: heatTextColor_, fitInside_: fitInside_, adLayout_: adLayout_, planCaptionEdit_: planCaptionEdit_, demographicBars_: demographicBars_, barLabelFontPx_: barLabelFontPx_, fitFontSize_: fitFontSize_, adStatLines_: adStatLines_, orderProblems_: orderProblems_ };
 }
