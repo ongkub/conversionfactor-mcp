@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.4-lines-nth-2026-11-20';
+var SCRIPT_VERSION = 'v4.5-branch-images-2026-11-20';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -401,7 +401,8 @@ function applyChartOp_(op, slide, counts, problems) {
 
 /** Replace the picture above a creative's rank box with the ad's picture; tag it so next month finds it. */
 function applyImageOp_(op, slide, counts, problems) {
-  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page Like)\\s*=');
+  // main campaign boxes say Engagement / Page Like; branch boxes say Message (or Page Like)
+  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page Like|Message)\\s*=');
   var boxShape = null;
   for (var i = 0; i < slide.shapes.length && !boxShape; i++) if (re.test(slide.texts[i])) boxShape = slide.shapes[i];
   if (!boxShape) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่องอันดับ ' + op.rank); return; }
