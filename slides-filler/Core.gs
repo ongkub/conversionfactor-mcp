@@ -114,7 +114,7 @@ function diceBigrams(a, b) {
   return (2 * hits) / (total + (b.length - 1));
 }
 
-function planTableEdits(cells, op) {
+function matchLabels_(labels, candidates) {
   var low = function (v) { return normKey(v).toLowerCase(); };
   var lastSegment = function (v) {
     var parts = String(v).split(/[ \t\u00a0]-[ \t\u00a0]/);
@@ -122,42 +122,37 @@ function planTableEdits(cells, op) {
   };
   // Meta ad-set names start with a counter ("1_Sangthai Page …", "5_Construction …") that the team's labels drop
   var dropCounter = function (k) { return k.replace(/^\d+[._)]/, ''); };
-  var cands = op.candidates.map(function (c) {
+  var cands = (candidates || []).map(function (c) {
     var keys = [String(c.key).toLowerCase()];
     (c.aliases || []).forEach(function (a) { keys.push(low(a)); });
     var withoutCounter = keys.map(dropCounter);
     withoutCounter.forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
-    return { keys: keys, last: lastSegment(c.name), c: c };
+    return { keys: keys, last: lastSegment(c.name) };
   });
 
-  var rows = [];
-  for (var r = 1; r < cells.length; r++) {
-    var label = String(cells[r][0] || '');
-    var stripped = label.replace(/^[ \t\u00a0]*\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, '');
-    var key = low(stripped);
-    // second header row ("Current 16/09/2026 - …") is not a data row
-    if (/^[ \t\u00a0]*(Current|Previous|Difference)\b/.test(label)) continue;
-    if (key) rows.push({ r: r, label: label, key: key, last: lastSegment(stripped), cand: -1 });
-  }
+  var items = labels.map(function (label) {
+    var stripped = String(label || '').replace(/^[ \t\u00a0]*\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, '');
+    return { key: low(stripped), last: lastSegment(stripped), cand: -1 };
+  });
 
   var used = {};
   var passes = [
-    function (row, cd) { return cd.keys.indexOf(row.key) >= 0; },
-    function (row, cd) {
-      return cd.keys.some(function (k) { return k.indexOf(row.key) === 0 || (k.length >= 3 && row.key.indexOf(k) === 0); });
+    function (item, cd) { return cd.keys.indexOf(item.key) >= 0; },
+    function (item, cd) {
+      return cd.keys.some(function (k) { return k.indexOf(item.key) === 0 || (k.length >= 3 && item.key.indexOf(k) === 0); });
     },
-    function (row, cd) { return !!row.last && !!cd.last && row.last === cd.last; },
+    function (item, cd) { return !!item.last && !!cd.last && item.last === cd.last; },
     // the team shortened the ad-set name ("Retargeting + 1% lookalike" inside "Sangthai Page Retargeting + 1%Lookalike")
-    function (row, cd) {
-      return row.key.length >= 8 && cd.keys.some(function (k) { return k.length >= 8 && (k.indexOf(row.key) >= 0 || row.key.indexOf(k) >= 0); });
+    function (item, cd) {
+      return item.key.length >= 8 && cd.keys.some(function (k) { return k.length >= 8 && (k.indexOf(item.key) >= 0 || item.key.indexOf(k) >= 0); });
     },
   ];
   passes.forEach(function (test) {
-    rows.forEach(function (row) {
-      if (row.cand >= 0) return;
+    items.forEach(function (item) {
+      if (item.cand >= 0 || !item.key) return;
       for (var i = 0; i < cands.length; i++) {
-        if (used[i] || !test(row, cands[i])) continue;
-        row.cand = i;
+        if (used[i] || !test(item, cands[i])) continue;
+        item.cand = i;
         used[i] = true;
         return;
       }
@@ -165,35 +160,123 @@ function planTableEdits(cells, op) {
   });
 
   // last resort: near-identical names (comma vs plus, "ST850PN" vs "ST850") — best unused candidate above a high similarity
-  rows.forEach(function (row) {
-    if (row.cand >= 0 || row.key.length < 8) return;
+  items.forEach(function (item) {
+    if (item.cand >= 0 || item.key.length < 8) return;
     var best = -1;
     var bestScore = 0.8;
     for (var i = 0; i < cands.length; i++) {
       if (used[i]) continue;
       for (var k = 0; k < cands[i].keys.length; k++) {
-        var score = diceBigrams(row.key, cands[i].keys[k]);
+        var score = diceBigrams(item.key, cands[i].keys[k]);
         if (score >= bestScore) { bestScore = score; best = i; }
       }
     }
-    if (best >= 0) { row.cand = best; used[best] = true; }
+    if (best >= 0) { item.cand = best; used[best] = true; }
   });
 
+  return items.map(function (item) { return item.cand; });
+}
+
+function planTableEdits(cells, op) {
+  var rows = [];
+  for (var r = 1; r < cells.length; r++) {
+    var label = String(cells[r][0] || '');
+    var stripped = label.replace(/^[ \t\u00a0]*\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, '');
+    var key = normKey(stripped).toLowerCase();
+    // second header row ("Current 16/09/2026 - …") is not a data row
+    if (/^[ \t\u00a0]*(Current|Previous|Difference)\b/.test(label)) continue;
+    if (key) rows.push({ r: r, label: label });
+  }
+
+  var matches = matchLabels_(rows.map(function (row) { return row.label; }), op.candidates);
+  var used = {};
   var edits = [];
   var unmatchedRows = [];
-  rows.forEach(function (row) {
-    if (row.cand < 0) { unmatchedRows.push(row.label.replace(/\s+/g, ' ').replace(/^ | $/g, '')); return; }
-    var values = cands[row.cand].c.cells;
+  for (var i = 0; i < rows.length; i++) {
+    var ci = matches[i];
+    if (ci < 0) { unmatchedRows.push(rows[i].label.replace(/\s+/g, ' ').replace(/^ | $/g, '')); continue; }
+    used[ci] = true;
+    var values = op.candidates[ci].cells;
     for (var col in values) {
       if (!Object.prototype.hasOwnProperty.call(values, col)) continue;
       var c = Number(col);
-      var old = String(cells[row.r][c] === undefined ? '' : cells[row.r][c]).replace(/[\s\u00a0]+$/, '');
-      edits.push({ row: row.r, col: c, oldText: old, newText: values[col] });
+      var old = String(cells[rows[i].r][c] === undefined ? '' : cells[rows[i].r][c]).replace(/[\s\u00a0]+$/, '');
+      edits.push({ row: rows[i].r, col: c, oldText: old, newText: values[col] });
     }
-  });
+  }
   var unusedCandidates = [];
-  for (var j = 0; j < cands.length; j++) if (!used[j]) unusedCandidates.push(cands[j].c.name);
+  for (var j = 0; j < op.candidates.length; j++) if (!used[j]) unusedCandidates.push(op.candidates[j].name);
   return { edits: edits, unmatchedRows: unmatchedRows, unusedCandidates: unusedCandidates };
+}
+
+/**
+ * Line-item fill: each qualifying line has "<label> <marker> : <value>" (marker defaults to "Result", case-sensitive).
+ * Lines with no label before the marker are ignored. Labels are matched to op.candidates via matchLabels_.
+ * Returns { edits: [{start, end, oldText, newText, label}], unmatchedLabels: [string], unusedCandidates: [string] }.
+ */
+function planLineEdits(text, op) {
+  var marker = (op && op.marker) ? op.marker : 'Result';
+  var candidates = (op && op.candidates) ? op.candidates : [];
+  var lines = splitLines_(text);
+  var qualifying = [];
+
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i];
+    var markerIdx = -1;
+    var colonIdx = -1;
+    var searchFrom = ln.start;
+    while (searchFrom <= ln.contentEnd - marker.length) {
+      var found = text.indexOf(marker, searchFrom);
+      if (found < 0 || found >= ln.contentEnd) break;
+      var afterMarker = skipBlanks_(text, found + marker.length, ln.contentEnd);
+      if (afterMarker < ln.contentEnd && text.charAt(afterMarker) === ':') {
+        markerIdx = found;
+        colonIdx = afterMarker;
+        break;
+      }
+      searchFrom = found + 1;
+    }
+    if (markerIdx < 0) continue;
+
+    var rawLabel = text.slice(ln.start, markerIdx).replace(/^[ \t\u00a0]+|[ \t\u00a0]+$/g, '');
+    var label = rawLabel.replace(/^\d+[ \t\u00a0]*[.)][ \t\u00a0]*/, '');
+    if (!label) continue;
+
+    var valueStart = skipBlanks_(text, colonIdx + 1, ln.contentEnd);
+    var end = ln.contentEnd;
+    if (valueStart > end) valueStart = end;
+    qualifying.push({
+      label: label,
+      start: valueStart,
+      end: end,
+      oldText: text.slice(valueStart, end),
+    });
+  }
+
+  var matches = matchLabels_(qualifying.map(function (q) { return q.label; }), candidates);
+  var used = {};
+  var edits = [];
+  var unmatchedLabels = [];
+  for (var j = 0; j < qualifying.length; j++) {
+    var ci = matches[j];
+    if (ci < 0) {
+      unmatchedLabels.push(qualifying[j].label);
+    } else {
+      used[ci] = true;
+      edits.push({
+        start: qualifying[j].start,
+        end: qualifying[j].end,
+        oldText: qualifying[j].oldText,
+        newText: candidates[ci].value,
+        label: qualifying[j].label,
+      });
+    }
+  }
+  var unusedCandidates = [];
+  for (var k = 0; k < candidates.length; k++) {
+    if (!used[k]) unusedCandidates.push(candidates[k].name);
+  }
+  return { edits: edits, unmatchedLabels: unmatchedLabels, unusedCandidates: unusedCandidates };
 }
 
 /**
@@ -283,6 +366,40 @@ function shapeMatches_(text, selector) {
   if (selector.containsText && text.indexOf(selector.containsText) < 0) return false;
   if (selector.matches && !new RegExp(selector.matches).test(text)) return false;
   return true;
+}
+
+/**
+ * Order positioned items ({ top, left, ... }) top-to-bottom; items whose tops differ by less than 5 pt
+ * count as the same row and are ordered left-to-right. Returns a new sorted array.
+ */
+function orderByPosition_(items) {
+  if (!items || !items.length) return [];
+  var tagged = items.map(function (it, idx) {
+    return { item: it, top: it.top, left: it.left, idx: idx };
+  });
+  tagged.sort(function (a, b) {
+    return (a.top - b.top) || (a.left - b.left) || (a.idx - b.idx);
+  });
+  var out = [];
+  var row = [tagged[0]];
+  var rowTop = tagged[0].top;
+  function flushRow() {
+    row.sort(function (a, b) {
+      return (a.left - b.left) || (a.top - b.top) || (a.idx - b.idx);
+    });
+    for (var j = 0; j < row.length; j++) out.push(row[j].item);
+  }
+  for (var i = 1; i < tagged.length; i++) {
+    if (tagged[i].top - rowTop < 5) {
+      row.push(tagged[i]);
+    } else {
+      flushRow();
+      row = [tagged[i]];
+      rowTop = tagged[i].top;
+    }
+  }
+  flushRow();
+  return out;
 }
 
 
@@ -398,5 +515,5 @@ function describePayload(payload) {
 
 
 if (typeof module !== 'undefined') {
-  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, planTableEdits: planTableEdits, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_ };
 }

@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.3-pull-snapshot-2026-11-03';
+var SCRIPT_VERSION = 'v4.4-lines-nth-2026-11-20';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -120,7 +120,7 @@ function collectShapes_(elements, pageW, pageH, out) {
       var right = left + el.getWidth();
       var bottom = top + el.getHeight();
       var outside = isFinite(left) && isFinite(top) && (left >= pageW || right <= 0 || top >= pageH || bottom <= 0);
-      if (!outside) out.push(el.asShape());
+      if (!outside) out.push({ shape: el.asShape(), top: top, left: left });
     }
   }
 }
@@ -147,15 +147,17 @@ function buildIndex_() {
   var w = pres.getPageWidth();
   var h = pres.getPageHeight();
   return pres.getSlides().map(function (slide, i) {
-    var shapes = [];
-    collectShapes_(slide.getPageElements(), w, h, shapes);
+    var shapeItems = [];
+    collectShapes_(slide.getPageElements(), w, h, shapeItems);
+    var shapes = shapeItems.map(function (it) { return it.shape; });
+    var shapePositions = shapeItems.map(function (it) { return { top: it.top, left: it.left }; });
     var tables = [];
     collectTables_(slide.getPageElements(), w, h, tables);
     var images = [];
     collectImages_(slide.getPageElements(), w, h, images);
     // Read every text once: finding a slide for each of ~200 ops would otherwise re-read the whole deck each time
     var texts = shapes.map(function (sh) { try { return sh.getText().asString(); } catch (e) { return ''; } });
-    return { number: i + 1, shapes: shapes, texts: texts, tables: tables, images: images };
+    return { number: i + 1, shapes: shapes, shapePositions: shapePositions, texts: texts, tables: tables, images: images };
   });
 }
 
@@ -164,12 +166,21 @@ function shapeText_(shape) {
 }
 
 function findSlide_(index, selector) {
+  if (!selector) return null;
+  var want = selector.nth || 1;
+  if (want < 1) return null;
+  var seen = 0;
   for (var i = 0; i < index.length; i++) {
     var texts = index[i].texts;
+    var matched = false;
     for (var j = 0; j < texts.length; j++) {
       var t = texts[j];
-      if (selector.containsText && t.indexOf(selector.containsText) >= 0) return index[i];
-      if (selector.titlePrefix && slideTitleMatches_(t, selector)) return index[i];
+      if (selector.containsText && t.indexOf(selector.containsText) >= 0) { matched = true; break; }
+      if (selector.titlePrefix && slideTitleMatches_(t, selector)) { matched = true; break; }
+    }
+    if (matched) {
+      seen++;
+      if (seen === want) return index[i];
     }
   }
   return null;
@@ -417,6 +428,74 @@ function applyImageOp_(op, slide, counts, problems) {
   counts.images++;
 }
 
+function applyTextEdits_(shape, edits, props, force, counts, problems, opts) {
+  for (var e = edits.length - 1; e >= 0; e--) {
+    var ed = edits[e];
+    var key = opts.keyFor(ed, e);
+    var stored = props.getProperty(key);
+    var decision = decideFill(ed.oldText, ed.newText, stored, !!force);
+    if (decision === 'fill') {
+      replaceRange_(shape, ed, opts.tone);
+      counts.filled++;
+      props.setProperty(key, ed.newText);
+    } else if (decision === 'unchanged') {
+      counts.unchanged++;
+      props.setProperty(key, ed.newText);
+      if (opts.tone) applyTone_(shape, ed.start, ed.newText, opts.tone);
+    } else {
+      counts.skipped_edited++;
+      problems.push(opts.skipMessage(ed));
+    }
+  }
+}
+
+function applyLinesOp_(op, slide, props, force, counts, problems) {
+  var marker = op.marker || 'Result';
+  var remaining = (op.candidates || []).slice();
+  var qualified = false;
+  var unmatchedAll = [];
+
+  for (var s = 0; s < slide.shapes.length; s++) {
+    var shape = slide.shapes[s];
+    var text = shapeText_(shape);
+    var plan = planLineEdits(text, { marker: marker, candidates: remaining });
+    if (!plan.edits.length && !plan.unmatchedLabels.length) continue;
+    qualified = true;
+
+    applyTextEdits_(shape, plan.edits, props, force, counts, problems, {
+      tone: null,
+      keyFor: function (ed) { return PROP_PREFIX + op.id + '#' + normKey(ed.label); },
+      skipMessage: function (ed) {
+        return op.id + ': ทีมแก้ไว้แล้ว (ข้าม) หน้า ' + slide.number + ' บรรทัด "' + ed.label + '" เดิม "' + ed.oldText + '"';
+      },
+    });
+
+    for (var u = 0; u < plan.unmatchedLabels.length; u++) unmatchedAll.push(plan.unmatchedLabels[u]);
+
+    var nextRemaining = [];
+    var ui = 0;
+    for (var r = 0; r < remaining.length; r++) {
+      if (ui < plan.unusedCandidates.length && remaining[r].name === plan.unusedCandidates[ui]) {
+        nextRemaining.push(remaining[r]);
+        ui++;
+      }
+    }
+    remaining = nextRemaining;
+  }
+
+  if (!qualified) {
+    counts.not_found++;
+    problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบบรรทัดที่มี "' + marker + ' :"');
+    return;
+  }
+  for (var ul = 0; ul < unmatchedAll.length && ul < 10; ul++) {
+    problems.push(op.id + ': บรรทัด "' + unmatchedAll[ul] + '" ไม่ตรงกับ ad set ใด (ทีมกรอกเอง)');
+  }
+  for (var uc = 0; uc < remaining.length && uc < 10; uc++) {
+    problems.push(op.id + ': ไม่มีบรรทัดสำหรับ "' + remaining[uc].name + '" = ' + remaining[uc].value);
+  }
+}
+
 function applyPayload(jsonText, force, withCharts, withImages) {
   var payload = JSON.parse(jsonText);
   if (!payload || payload.schema !== SCHEMA) throw new Error('JSON นี้ไม่ใช่รูปแบบ ' + SCHEMA + ' — คัดลอกจากหัวข้อ "7. JSON สำหรับสคริปต์เติมสไลด์"');
@@ -445,6 +524,10 @@ function applyPayloadObject_(payload, force, withCharts, withImages) {
   try {
   for (var i = 0; i < payload.fills.length; i++) {
     var op = payload.fills[i];
+    if (op.kind && op.kind !== 'image' && op.kind !== 'chart' && op.kind !== 'table' && op.kind !== 'lines') {
+      problems.push(op.id + ': ชนิดคำสั่ง "' + op.kind + '" ไม่รองรับในสคริปต์เวอร์ชันนี้');
+      continue;
+    }
     if (op.kind === 'table' && !op.slide) {
       var any = false;
       for (var si = 0; si < index.length; si++) {
@@ -460,7 +543,7 @@ function applyPayloadObject_(payload, force, withCharts, withImages) {
     if (!slide) {
       counts.not_found++;
       problems.push(op.id + ': ไม่พบหน้า');
-      if (op.slide.titlePrefix && !debugShown) {
+      if (op.slide && op.slide.titlePrefix && !debugShown) {
         debugShown = true;
         problems.push('  debug (' + op.id + '): ' + (debugTitle_(op.slide).join(' ; ') || 'ไม่พบกล่องที่มีคำว่า Campaign + ชื่อสาขานี้เลย'));
       }
@@ -489,34 +572,52 @@ function applyPayloadObject_(payload, force, withCharts, withImages) {
       continue;
     }
 
-    var edited = false;
-    var done = false;
-    for (var s = 0; s < slide.shapes.length && !done; s++) {
-      var shape = slide.shapes[s];
-      var text = shapeText_(shape);
-      if (!shapeMatches_(text, op.shape)) continue;
-      var edits = planShapeEdits(text, op);
-      if (!edits.length) continue;
+    if (op.kind === 'lines') {
+      applyLinesOp_(op, slide, props, force, counts, problems);
+      continue;
+    }
 
-      for (var e = edits.length - 1; e >= 0; e--) {
-        var key = PROP_PREFIX + op.id + '#' + e;
-        var stored = props.getProperty(key);
-        var decision = decideFill(edits[e].oldText, edits[e].newText, stored, !!force);
-        if (decision === 'fill') {
-          replaceRange_(shape, edits[e], op.tone);
-          counts.filled++;
-          props.setProperty(key, edits[e].newText);
-        } else if (decision === 'unchanged') {
-          counts.unchanged++;
-          props.setProperty(key, edits[e].newText);
-          applyTone_(shape, edits[e].start, edits[e].newText, op.tone);
-        } else {
-          counts.skipped_edited++;
-          problems.push(op.id + ': ทีมแก้ไว้แล้ว (ข้าม) หน้า ' + slide.number + ' เดิม "' + edits[e].oldText + '"');
+    var normalOpts = {
+      tone: op.tone,
+      keyFor: function (ed, idx) { return PROP_PREFIX + op.id + '#' + idx; },
+      skipMessage: function (ed) {
+        return op.id + ': ทีมแก้ไว้แล้ว (ข้าม) หน้า ' + slide.number + ' เดิม "' + ed.oldText + '"';
+      },
+    };
+    var edited = false;
+    if (op.shape && op.shape.nth) {
+      var matchingShapes = [];
+      for (var ms = 0; ms < slide.shapes.length; ms++) {
+        var mText = shapeText_(slide.shapes[ms]);
+        if (!shapeMatches_(mText, op.shape)) continue;
+        matchingShapes.push({
+          shape: slide.shapes[ms],
+          text: mText,
+          top: slide.shapePositions[ms].top,
+          left: slide.shapePositions[ms].left,
+        });
+      }
+      var orderedShapes = orderByPosition_(matchingShapes);
+      var picked = orderedShapes[op.shape.nth - 1];
+      if (picked) {
+        var nthEdits = planShapeEdits(picked.text, op);
+        if (nthEdits.length) {
+          applyTextEdits_(picked.shape, nthEdits, props, force, counts, problems, normalOpts);
+          edited = true;
         }
       }
-      edited = true;
-      done = true; // first matching shape only
+    } else {
+      var done = false;
+      for (var s = 0; s < slide.shapes.length && !done; s++) {
+        var shape = slide.shapes[s];
+        var text = shapeText_(shape);
+        if (!shapeMatches_(text, op.shape)) continue;
+        var edits = planShapeEdits(text, op);
+        if (!edits.length) continue;
+        applyTextEdits_(shape, edits, props, force, counts, problems, normalOpts);
+        edited = true;
+        done = true; // first matching shape only
+      }
     }
     if (!edited) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่อง/บรรทัดที่ตรงกัน'); }
   }
