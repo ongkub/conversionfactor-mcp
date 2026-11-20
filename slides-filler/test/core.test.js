@@ -344,6 +344,22 @@ test('creative pictures: the picture above each rank box, tagged ones first, cha
   assert.equal(core.pickCreativeImage_(box1, [{ left: 793, top: 100, width: 125, height: 50, title: '' }], 'x'), null);
 });
 
+test('albumLayout: two tiles split horizontally with a 2pt gutter', () => {
+  assert.deepEqual(core.albumLayout({ left: 10, top: 20, width: 102, height: 80 }, 2), [
+    { left: 10, top: 20, width: 50, height: 80 },
+    { left: 62, top: 20, width: 50, height: 80 },
+  ]);
+});
+
+test('albumLayout: three tiles use a 60% top image and two bottom halves', () => {
+  const tiles = core.albumLayout({ left: 10, top: 20, width: 102, height: 102 }, 3);
+  assert.deepEqual(tiles, [
+    { left: 10, top: 20, width: 102, height: 60 },
+    { left: 10, top: 82, width: 50, height: 40 },
+    { left: 62, top: 82, width: 50, height: 40 },
+  ]);
+});
+
 test('headerValue_ finds a header whatever its case', () => {
   assert.equal(core.headerValue_({ 'x-report-snapshot-id': 'abc' }, 'X-Report-Snapshot-Id'), 'abc');
   assert.equal(core.headerValue_({ 'X-Report-Snapshot-Id': 'abc' }, 'x-report-snapshot-id'), 'abc');
@@ -474,4 +490,112 @@ test('planLineEdits: ignores marker lines with no label before the marker', () =
     unmatchedLabels: [],
     unusedCandidates: ['Reach'],
   });
+});
+
+// ---- Google Ads slides (gchart / gtable / gad) ----
+
+test('anchorMatchesText_: exact label ignores case and padding, regex matches "Most … ad" variants', () => {
+  assert.ok(core.anchorMatchesText_('  Demographics \n', { label: 'Demographics' }));
+  assert.ok(core.anchorMatchesText_('demographics', { label: 'Demographics' }));
+  assert.ok(!core.anchorMatchesText_('Demographics of users', { label: 'Demographics' }));
+  const most = { matches: '^\\s*Most\\s+\\w+\\s+ad\\s*$' };
+  ['Most clicked ad', 'Most Conversion ad  ', 'Most Views ad'].forEach((t) => assert.ok(core.anchorMatchesText_(t, most), t));
+  assert.ok(!core.anchorMatchesText_('Most clicked ad copy', most));
+  assert.ok(!core.anchorMatchesText_('x', {}));
+  assert.strictEqual(core.findAnchorShape_(['Search Campaign', 'Campaign  ', 'Keyword'], { label: 'Campaign' }), 1);
+  assert.strictEqual(core.findAnchorShape_(['a'], { label: 'Campaign' }), -1);
+});
+
+const img = (left, top, width, height, title) => ({ left, top, width, height, title: title || '' });
+
+test('pickScreenshotBelow_: nearest picture below the label, ignores our own and ones to the side', () => {
+  const label = { left: 40, top: 200, width: 120, height: 20 };
+  const demo = img(40, 225, 300, 150);
+  const other = img(380, 225, 300, 150); // right column, far from the label
+  const ours = img(40, 222, 300, 150, 'spark:gtable:google.search.demographics');
+  const above = img(40, 100, 300, 80);
+  assert.strictEqual(core.pickScreenshotBelow_(label, [other, ours, above, demo]), demo);
+  assert.strictEqual(core.pickScreenshotBelow_(label, [other, above]), null);
+  // a picture that is centred under a narrow label is accepted even when it starts left of it
+  assert.strictEqual(core.pickScreenshotBelow_({ left: 100, top: 50, width: 80, height: 20 }, [img(20, 80, 300, 100)]) !== null, true);
+});
+
+test('pickTopLeftPicture_: tag first, then the big top-left picture; small icons and right-hand pictures are skipped', () => {
+  const page = { width: 960, height: 540 };
+  const icon = img(10, 10, 30, 30);
+  const chart = img(30, 90, 520, 200);
+  const right = img(600, 80, 300, 300);
+  assert.strictEqual(core.pickTopLeftPicture_([icon, right, chart], page, 'spark:gchart:x'), chart);
+  const mine = img(30, 95, 520, 200, 'spark:gchart:x');
+  assert.strictEqual(core.pickTopLeftPicture_([chart, mine], page, 'spark:gchart:x'), mine);
+  // our other visuals never count as the screenshot
+  assert.strictEqual(core.pickTopLeftPicture_([img(30, 90, 520, 200, 'spark:gad:y:img')], page, 'spark:gchart:x'), null);
+  assert.strictEqual(core.pickTopLeftPicture_([icon, right], page, 'spark:gchart:x'), null);
+});
+
+test('taggedElements_ + unionBox_: finds our parts by tag and gives their common box', () => {
+  const els = [img(10, 10, 100, 100, 'spark:gad:a:img'), img(120, 10, 100, 60, 'spark:gad:a:stats'), img(0, 0, 5, 5, 'spark:gad:b'), img(0, 0, 5, 5, 'other')];
+  const mine = core.taggedElements_(els, 'spark:gad:a');
+  assert.strictEqual(mine.length, 2);
+  assert.deepStrictEqual(core.unionBox_(mine), { left: 10, top: 10, width: 210, height: 100 });
+  assert.strictEqual(core.unionBox_([]), null);
+  // a prefix of another id is not the same tag
+  assert.strictEqual(core.taggedElements_([img(0, 0, 1, 1, 'spark:gad:ab')], 'spark:gad:a').length, 0);
+});
+
+test('tableGeometry_: widths add up to the box, first column widest, font follows row height', () => {
+  const box = { left: 0, top: 0, width: 400, height: 140 };
+  const rows = [['Search-Tier1 (ชลบุรี)', '120', '฿5.50', '฿660'], ['Total', '120', '฿5.50', '฿660']];
+  const g = core.tableGeometry_(box, rows, ['Campaign', 'Conversions', 'Cost/conv.', 'Cost']);
+  assert.strictEqual(g.cols, 4);
+  assert.strictEqual(g.rows, 3);
+  assert.ok(Math.abs(g.colWidths.reduce((a, b) => a + b, 0) - 400) < 0.5);
+  assert.ok(g.colWidths[0] > g.colWidths[1] && g.colWidths[0] > g.colWidths[3]);
+  assert.ok(g.fontSize >= 7 && g.fontSize <= 11);
+  const tight = core.tableGeometry_({ left: 0, top: 0, width: 400, height: 40 }, rows, ['a', 'b', 'c', 'd']);
+  assert.strictEqual(tight.fontSize, 7);
+  assert.strictEqual(core.tableGeometry_(box, [], []).cols, 0);
+});
+
+test('heat colours: white at 0, blue at 1, clamped, readable text colour', () => {
+  assert.strictEqual(core.heatColor_(0), '#FFFFFF');
+  assert.strictEqual(core.heatColor_(1), '#4285F4');
+  assert.strictEqual(core.heatColor_(7), '#4285F4');
+  assert.strictEqual(core.heatColor_(-1), '#FFFFFF');
+  assert.strictEqual(core.heatColor_(undefined), '#FFFFFF');
+  assert.strictEqual(core.heatTextColor_(0.2), '#202124');
+  assert.strictEqual(core.heatTextColor_(0.9), '#FFFFFF');
+});
+
+test('fitInside_ keeps the aspect and centres; adLayout_ splits the box in two halves', () => {
+  const r = core.fitInside_({ left: 0, top: 0, width: 200, height: 100 }, 400, 400);
+  assert.deepStrictEqual(r, { left: 50, top: 0, width: 100, height: 100 });
+  assert.deepStrictEqual(core.fitInside_({ left: 5, top: 5, width: 50, height: 20 }, 0, 0), { left: 5, top: 5, width: 50, height: 20 });
+  const l = core.adLayout_({ left: 10, top: 20, width: 308, height: 90 });
+  assert.deepStrictEqual(l.left, { left: 10, top: 20, width: 150, height: 90 });
+  assert.deepStrictEqual(l.right, { left: 168, top: 20, width: 150, height: 90 });
+});
+
+test('planCaptionEdit_: keeps the team first line, replaces the second', () => {
+  const text = 'คนที่เกิด Conversion โฆษณาส่วนใหญ่เป็น  \nกลุ่มเพศชายอายุ 25-34 ปี (9 Conversion)  ';
+  const caption = 'คนที่เกิด Conversion โฆษณาส่วนใหญ่เป็น กลุ่มเพศหญิง อายุ 35-44 ปี (12 Conversion)';
+  const edit = core.planCaptionEdit_(text, caption);
+  assert.strictEqual(core.applyEdits_(text, [edit]), 'คนที่เกิด Conversion โฆษณาส่วนใหญ่เป็น  \nกลุ่มเพศหญิง อายุ 35-44 ปี (12 Conversion)  ');
+  // single line: the value follows the marker
+  const one = 'คนดูโฆษณาส่วนใหญ่เป็น กลุ่มเพศชาย (5 Views)';
+  const e1 = core.planCaptionEdit_(one, 'คนดูโฆษณาส่วนใหญ่เป็น กลุ่มเพศหญิง (9 Views)');
+  assert.strictEqual(core.applyEdits_(one, [e1]), 'คนดูโฆษณาส่วนใหญ่เป็น กลุ่มเพศหญิง (9 Views)');
+  // no marker in the shape, or in the caption: nothing to do
+  assert.strictEqual(core.planCaptionEdit_('Demographics', caption), null);
+  assert.strictEqual(core.planCaptionEdit_(text, 'ไม่มีคำนั้น'), null);
+});
+
+test('tag prefixes are distinct from the older chart / creative tags', () => {
+  [core.GCHART_TAG_PREFIX, core.GTABLE_TAG_PREFIX, core.GAD_TAG_PREFIX].forEach((p) => {
+    assert.ok(p.startsWith('spark:'));
+    assert.ok(p !== core.CHART_TAG_PREFIX && p !== core.CREATIVE_TAG_PREFIX);
+  });
+  // the old chart picker must not take a picture the Google ops tagged
+  const old = core.pickChartImage_({ left: 40, top: 100, width: 100, height: 20 }, [img(40, 130, 400, 200, 'spark:gchart:google.search.chart')], 'spark:chart:x');
+  assert.strictEqual(old === null || old.title !== 'spark:gchart:google.search.chart', true);
 });
