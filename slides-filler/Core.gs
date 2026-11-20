@@ -506,11 +506,58 @@ function isSparkTitle_(title) {
   return String(title || '').indexOf('spark:') === 0;
 }
 
-/** Does this shape text satisfy an anchor { label?, matches?, topLeftPicture? }? label = whole text, case-insensitive. */
+function visibleShare_(box, page) {
+  if (!box || !page || !isFinite(box.left) || !isFinite(box.top)) return 0;
+  if (!(page.width > 0) || !(page.height > 0)) return 0;
+  if (!(box.width > 0) || !(box.height > 0)) {
+    return (box.left >= 0 && box.left < page.width && box.top >= 0 && box.top < page.height) ? 1 : 0;
+  }
+  var ix = Math.max(0, Math.min(box.left + box.width, page.width) - Math.max(box.left, 0));
+  var iy = Math.max(0, Math.min(box.top + box.height, page.height) - Math.max(box.top, 0));
+  return (ix * iy) / (box.width * box.height);
+}
+
+/** Index of the shape with non-empty trimmed text highest on the slide (smallest top; within <3pt, smaller left wins), or -1. */
+function topTextIndex_(texts, positions) {
+  if (!texts || !positions) return -1;
+  var n = Math.min(texts.length, positions.length);
+  var minTop = Infinity;
+  var i;
+  for (i = 0; i < n; i++) {
+    if (!positions[i]) continue;
+    if (!String(texts[i] || '').replace(/^\s+|\s+$/g, '')) continue;
+    if (positions[i].top < minTop) minTop = positions[i].top;
+  }
+  if (!isFinite(minTop)) return -1;
+  var best = -1;
+  for (i = 0; i < n; i++) {
+    if (!positions[i]) continue;
+    if (!String(texts[i] || '').replace(/^\s+|\s+$/g, '')) continue;
+    if (positions[i].top - minTop >= 3) continue;
+    if (best < 0 || positions[i].left < positions[best].left ||
+        (positions[i].left === positions[best].left && positions[i].top < positions[best].top)) {
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** Does this shape text satisfy an anchor { label?, matches?, topLeftPicture? }? label = whole text or first non-empty line, case-insensitive. */
 function anchorMatchesText_(text, anchor) {
   if (!anchor) return false;
-  var t = String(text || '').replace(/^[ \t \n\u000b\r]+|[ \t \n\u000b\r]+$/g, '');
-  if (anchor.label) return t.toLowerCase() === String(anchor.label).toLowerCase();
+  var trim = function (s) { return String(s || '').replace(/^[ \t \n\u000b\r]+|[ \t \n\u000b\r]+$/g, ''); };
+  var t = trim(text);
+  if (anchor.label) {
+    var want = String(anchor.label).toLowerCase();
+    if (t.toLowerCase() === want) return true;
+    var lines = String(text || '').split(/[\n\u000b\r]/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = trim(lines[i]);
+      if (!line) continue;
+      return line.toLowerCase() === want;
+    }
+    return false;
+  }
   if (anchor.matches) return new RegExp(anchor.matches).test(t);
   return false;
 }
@@ -545,12 +592,13 @@ function unionBox_(boxes) {
  * below the label's top and overlaps the label horizontally (at least 50% of the label width, or starts within 60 pt of its
  * left edge). Pictures this script made (any spark: title) are never picked. Boxes {left, top, width, height}.
  */
-function pickScreenshotBelow_(label, images) {
+function pickScreenshotBelow_(label, images, page) {
   var best = null;
   for (var i = 0; i < images.length; i++) {
     var im = images[i];
     if (isSparkTitle_(im.title)) continue;
     if (!(im.width > 0) || !(im.height > 0)) continue;
+    if (page && visibleShare_(im, page) < 0.5) continue;
     if (im.top < label.top - 4) continue;
     var overlap = Math.min(im.left + im.width, label.left + label.width) - Math.max(im.left, label.left);
     var startsNear = Math.abs(im.left - label.left) <= 60;
@@ -566,11 +614,14 @@ function pickScreenshotBelow_(label, images) {
  */
 function pickTopLeftPicture_(images, page, tag) {
   var i;
-  for (i = 0; i < images.length; i++) if (images[i].title === tag) return images[i];
+  for (i = 0; i < images.length; i++) {
+    if (images[i].title === tag && (!page || visibleShare_(images[i], page) >= 0.5)) return images[i];
+  }
   var best = null;
   for (i = 0; i < images.length; i++) {
     var im = images[i];
     if (isSparkTitle_(im.title)) continue;
+    if (page && visibleShare_(im, page) < 0.5) continue;
     if (im.width < 0.25 * page.width || im.height < 0.15 * page.height) continue;
     if (im.left + im.width / 2 > 0.65 * page.width) continue;
     if (!best || im.top < best.top - 5 || (Math.abs(im.top - best.top) < 5 && im.left < best.left)) best = im;
@@ -704,6 +755,73 @@ function describePayload(payload) {
 }
 
 
+/** Convert a Demographics gtable op into horizontal bar chart data: { title, labels, values }. */
+function demographicBars_(op) {
+  var header = (op && op.header) ? op.header : [];
+  var title = header[1] !== undefined && header[1] !== null ? String(header[1]) : '';
+  var rows = (op && op.rows) ? op.rows : [];
+  var labels = [];
+  var values = [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i] || [];
+    var name = row[0] === undefined || row[0] === null ? '' : String(row[0]);
+    var pct = row[2] === undefined || row[2] === null ? '' : String(row[2]);
+    labels.push(pct ? name + ' (' + pct + ')' : name);
+    var raw = String(row[1] === undefined || row[1] === null ? '' : row[1]).replace(/[,฿\s\u00a0]/g, '');
+    var num = raw === '' ? 0 : Number(raw);
+    values.push(isFinite(num) ? num : 0);
+  }
+  return { title: title, labels: labels, values: values };
+}
+
+/** Largest integer font size (14 down to 7) such that wrapped lines fit inside box. */
+function fitFontSize_(lines, box) {
+  if (!box) return 7;
+  var arr = lines || [];
+  for (var s = 14; s >= 7; s--) {
+    var cpl = Math.max(1, Math.floor(box.width / (s * 0.55)));
+    var wrapped = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var len = String(arr[i] === undefined || arr[i] === null ? '' : arr[i]).length;
+      wrapped += Math.max(1, Math.ceil(len / cpl));
+    }
+    if (wrapped * s * 1.3 <= box.height) return s;
+  }
+  return 7;
+}
+
+/** "Header: value" lines for a gad op's stat summary. */
+function adStatLines_(op) {
+  if (!op || !op.header) return [];
+  var header = op.header;
+  var row = op.row || [];
+  var out = [];
+  for (var i = 0; i < header.length; i++) {
+    var val = row[i] === undefined || row[i] === null ? '' : String(row[i]);
+    out.push(String(header[i]) + ': ' + val);
+  }
+  return out;
+}
+
+/** Put real problems first, move "ทีมแก้ไว้แล้ว" skips to the end (capping skips at 8 + summary), then slice to limit. */
+function orderProblems_(problems, limit) {
+  var cap = (limit === undefined || limit === null) ? 60 : limit;
+  var list = problems || [];
+  var real = [];
+  var skipped = [];
+  for (var i = 0; i < list.length; i++) {
+    var line = String(list[i]);
+    if (line.indexOf('ทีมแก้ไว้แล้ว') >= 0) skipped.push(line);
+    else real.push(line);
+  }
+  if (skipped.length > 8) {
+    var extra = skipped.length - 8;
+    skipped = skipped.slice(0, 8);
+    skipped.push('…และข้ามจุดที่ทีมแก้ไว้อีก ' + extra + ' จุด (ติ๊ก "ทับกล่องที่ทีมแก้ไว้ด้วย" ถ้าต้องการให้ทับ)');
+  }
+  return real.concat(skipped).slice(0, cap);
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_, GCHART_TAG_PREFIX: GCHART_TAG_PREFIX, GTABLE_TAG_PREFIX: GTABLE_TAG_PREFIX, GAD_TAG_PREFIX: GAD_TAG_PREFIX, anchorMatchesText_: anchorMatchesText_, findAnchorShape_: findAnchorShape_, taggedElements_: taggedElements_, unionBox_: unionBox_, pickScreenshotBelow_: pickScreenshotBelow_, pickTopLeftPicture_: pickTopLeftPicture_, tableGeometry_: tableGeometry_, heatColor_: heatColor_, heatTextColor_: heatTextColor_, fitInside_: fitInside_, adLayout_: adLayout_, planCaptionEdit_: planCaptionEdit_ };
+  module.exports = { headerValue_: headerValue_, pickCreativeImage_: pickCreativeImage_, albumLayout: albumLayout, CREATIVE_TAG_PREFIX: CREATIVE_TAG_PREFIX, pickChartImage_: pickChartImage_, chartPixelSize: chartPixelSize, CHART_TAG_PREFIX: CHART_TAG_PREFIX, diceBigrams: diceBigrams, isReportKey: isReportKey, exportUrl: exportUrl, explainExportStatus: explainExportStatus, describePayload: describePayload, buildGrid: buildGrid, planHeaderDateEdits: planHeaderDateEdits, matchLabels_: matchLabels_, planTableEdits: planTableEdits, planLineEdits: planLineEdits, orderByPosition_: orderByPosition_, normKey: normKey, splitLines_: splitLines_, planShapeEdits: planShapeEdits, applyEdits_: applyEdits_, decideFill: decideFill, slideTitleMatches_: slideTitleMatches_, percentRange: percentRange, TONE_COLORS: TONE_COLORS, shapeMatches_: shapeMatches_, GCHART_TAG_PREFIX: GCHART_TAG_PREFIX, GTABLE_TAG_PREFIX: GTABLE_TAG_PREFIX, GAD_TAG_PREFIX: GAD_TAG_PREFIX, visibleShare_: visibleShare_, topTextIndex_: topTextIndex_, anchorMatchesText_: anchorMatchesText_, findAnchorShape_: findAnchorShape_, taggedElements_: taggedElements_, unionBox_: unionBox_, pickScreenshotBelow_: pickScreenshotBelow_, pickTopLeftPicture_: pickTopLeftPicture_, tableGeometry_: tableGeometry_, heatColor_: heatColor_, heatTextColor_: heatTextColor_, fitInside_: fitInside_, adLayout_: adLayout_, planCaptionEdit_: planCaptionEdit_, demographicBars_: demographicBars_, fitFontSize_: fitFontSize_, adStatLines_: adStatLines_, orderProblems_: orderProblems_ };
 }
