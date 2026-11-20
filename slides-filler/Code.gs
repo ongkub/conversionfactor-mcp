@@ -6,7 +6,7 @@
 
 var SCHEMA = 'sangthai-slides/1';
 // Shown in the result so it is obvious which copy of this script is running
-var SCRIPT_VERSION = 'v4.7-google-visuals-2026-11-20';
+var SCRIPT_VERSION = 'v4.8.1-google-fit-2026-11-20';
 // Prefix of the remembered values. Bumped (v2, v3) when earlier runs left wrong values behind, so that memory is not trusted.
 var PROP_PREFIX = 'v3:';
 
@@ -176,10 +176,19 @@ function findSlide_(index, selector) {
   for (var i = 0; i < index.length; i++) {
     var texts = index[i].texts;
     var matched = false;
-    for (var j = 0; j < texts.length; j++) {
-      var t = texts[j];
-      if (selector.containsText && t.indexOf(selector.containsText) >= 0) { matched = true; break; }
-      if (selector.titlePrefix && slideTitleMatches_(t, selector)) { matched = true; break; }
+    if (selector.topTitle) {
+      var ti = topTextIndex_(texts, index[i].shapePositions);
+      if (ti >= 0) {
+        var topText = texts[ti];
+        if (selector.containsText && topText.indexOf(selector.containsText) >= 0) matched = true;
+        if (selector.titlePrefix && slideTitleMatches_(topText, selector)) matched = true;
+      }
+    } else {
+      for (var j = 0; j < texts.length; j++) {
+        var t = texts[j];
+        if (selector.containsText && t.indexOf(selector.containsText) >= 0) { matched = true; break; }
+        if (selector.titlePrefix && slideTitleMatches_(t, selector)) { matched = true; break; }
+      }
     }
     if (matched) {
       seen++;
@@ -404,8 +413,8 @@ function applyChartOp_(op, slide, counts, problems) {
 
 /** Replace the picture above a creative's rank box with the ad's picture; tag it so next month finds it. */
 function applyImageOp_(op, slide, counts, problems) {
-  // main campaign boxes say Engagement / Page Like; branch boxes say Message (or Page Like)
-  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page Like|Message)\\s*=');
+  // main campaign boxes say Engagement / Page Like; branch boxes say Message or "Pagelike" (one word)
+  var re = new RegExp('^\\s*' + op.rank + '\\s+(?:Engagement|Page\\s*Like|Message)\\s*=', 'i');
   var boxShape = null;
   for (var i = 0; i < slide.shapes.length && !boxShape; i++) if (re.test(slide.texts[i])) boxShape = slide.shapes[i];
   if (!boxShape) { counts.not_found++; problems.push(op.id + ': พบหน้า ' + slide.number + ' แต่ไม่พบกล่องอันดับ ' + op.rank); return; }
@@ -481,11 +490,33 @@ function applyImageOp_(op, slide, counts, problems) {
 
 // ---- Google Ads slides (gchart / gtable / gad): screenshots of the Google Ads UI replaced by drawn visuals ----
 
+function tableBox_(el) {
+  var table = el.asTable();
+  var width = 0;
+  var height = 0;
+  var cols = table.getNumColumns();
+  for (var c = 0; c < cols; c++) width += table.getColumn(c).getWidth();
+  var rows = table.getNumRows();
+  for (var r = 0; r < rows; r++) height += table.getRow(r).getMinimumHeight();
+  return { left: el.getLeft(), top: el.getTop(), width: width, height: height };
+}
+
 function pageElementBoxes_(slide) {
   return slide.page.getPageElements().map(function (el) {
     var title = '';
     try { title = el.getTitle() || ''; } catch (e) {}
-    return { el: el, title: title, left: el.getLeft(), top: el.getTop(), width: el.getWidth(), height: el.getHeight() };
+    var left = el.getLeft();
+    var top = el.getTop();
+    var width = el.getWidth();
+    var height = el.getHeight();
+    if ((!(width > 0) || !(height > 0)) && el.getPageElementType() === SlidesApp.PageElementType.TABLE) {
+      try {
+        var tb = tableBox_(el);
+        if (!(width > 0)) width = tb.width;
+        if (!(height > 0)) height = tb.height;
+      } catch (e) {}
+    }
+    return { el: el, title: title, left: left, top: top, width: width, height: height };
   });
 }
 
@@ -497,24 +528,75 @@ function shapeBox_(shape) {
   return { left: shape.getLeft(), top: shape.getTop(), width: shape.getWidth(), height: shape.getHeight() };
 }
 
-/** Where does a Google op put its visual? Our own element from the last run (found by tag), else the team's screenshot. */
-function locateGoogleTarget_(op, slide, tag) {
+function round1_(v) {
+  return Math.round(Number(v) * 10) / 10;
+}
+
+/** Where does a Google op put its visual? Our own visible element from the last run (found by tag), else the team's screenshot. */
+function locateGoogleTarget_(op, slide, tag, props) {
+  var pres = SlidesApp.getActivePresentation();
+  var page = { width: pres.getPageWidth(), height: pres.getPageHeight() };
   var boxes = pageElementBoxes_(slide);
-  var mine = taggedElements_(boxes, tag);
-  if (mine.length) return { box: unionBox_(mine), remove: mine };
+  var mine = taggedElements_(boxes, tag).filter(function (b) { return visibleShare_(b, page) >= 0.5; });
+  var boxKey = PROP_PREFIX + 'gbox:' + op.id;
+  if (mine.length) {
+    var storedBox = null;
+    if (props) {
+      try {
+        var parsed = JSON.parse(props.getProperty(boxKey));
+        if (parsed && parsed.width > 0 && parsed.height > 0 && isFinite(parsed.left) && isFinite(parsed.top)) {
+          storedBox = { left: parsed.left, top: parsed.top, width: parsed.width, height: parsed.height };
+        }
+      } catch (e) {}
+    }
+    var tableItem = null;
+    for (var mi = 0; mi < mine.length; mi++) {
+      if (mine[mi].el.getPageElementType() === SlidesApp.PageElementType.TABLE) {
+        tableItem = mine[mi];
+        break;
+      }
+    }
+    var resolvedBox = null;
+    if (!tableItem) {
+      var positive = mine.filter(function (b) { return b.width > 0 && b.height > 0; });
+      resolvedBox = unionBox_(positive) || storedBox;
+    } else {
+      var tb = null;
+      try { tb = tableBox_(tableItem.el); } catch (e) {}
+      var tWidth = storedBox ? storedBox.width : (tb ? tb.width : 0);
+      var tHeight = storedBox ? storedBox.height : (tb ? tb.height : 0);
+      var tLeft = tableItem.el.getLeft();
+      var tTop = tableItem.el.getTop();
+      if (tWidth > 0 && tHeight > 0 && isFinite(tLeft) && isFinite(tTop)) {
+        resolvedBox = { left: tLeft, top: tTop, width: tWidth, height: tHeight };
+      }
+    }
+    if (!resolvedBox || !(resolvedBox.width > 0) || !(resolvedBox.height > 0)) {
+      return { error: 'กล่องเดิมมีขนาดเป็น 0' };
+    }
+    return { box: resolvedBox, remove: mine };
+  }
   var images = boxes.filter(function (b) { return b.el.getPageElementType() === SlidesApp.PageElementType.IMAGE; });
   var pic = null;
   if (op.anchor && op.anchor.topLeftPicture) {
-    var pres = SlidesApp.getActivePresentation();
-    pic = pickTopLeftPicture_(images, { width: pres.getPageWidth(), height: pres.getPageHeight() }, tag);
+    pic = pickTopLeftPicture_(images, page, tag);
     if (!pic) return { error: 'ไม่พบภาพแคปหน้าจอที่มุมซ้ายบน' };
   } else {
     var idx = findAnchorShape_(slide.texts, op.anchor);
     if (idx < 0) return { error: 'ไม่พบหัวข้อ "' + (op.anchor.label || op.anchor.matches) + '"' };
-    pic = pickScreenshotBelow_(shapeBox_(slide.shapes[idx]), images);
+    pic = pickScreenshotBelow_(shapeBox_(slide.shapes[idx]), images, page);
     if (!pic) return { error: 'พบหัวข้อ "' + (op.anchor.label || op.anchor.matches) + '" แต่ไม่พบภาพแคปหน้าจอใต้หัวข้อ' };
   }
-  return { box: { left: pic.left, top: pic.top, width: pic.width, height: pic.height }, remove: [pic], picture: pic };
+  var box = { left: pic.left, top: pic.top, width: pic.width, height: pic.height };
+  if (props) {
+    props.setProperty(boxKey, JSON.stringify({
+      left: round1_(box.left),
+      top: round1_(box.top),
+      width: round1_(box.width),
+      height: round1_(box.height),
+    }));
+  }
+  return { box: box, remove: [pic], picture: pic };
 }
 
 /** Line chart (Charts service) as a PNG blob. Series with axis 1 use the right-hand scale. */
@@ -544,10 +626,36 @@ function drawLineChartBlob_(op, width, height) {
   return chart.getAs('image/png');
 }
 
+/** Horizontal bar chart (Charts service) for Demographics as a PNG blob. */
+function drawBarChartBlob_(bars, width, height) {
+  var labelFont = barLabelFontPx_(height, bars.labels.length);
+  var valueFont = Math.max(8, labelFont - 2);
+  var data = Charts.newDataTable()
+    .addColumn(Charts.ColumnType.STRING, 'Group')
+    .addColumn(Charts.ColumnType.NUMBER, 'อายุ')
+    .addColumn(Charts.ColumnType.NUMBER, 'เพศ');
+  for (var i = 0; i < bars.labels.length; i++) {
+    var isGender = bars.groups && bars.groups[i] === 'gender';
+    var val = bars.values[i] || 0;
+    data.addRow([bars.labels[i], isGender ? 0 : val, isGender ? val : 0]);
+  }
+  var chart = Charts.newBarChart()
+    .setDataTable(data.build())
+    .setColors(['#4285F4', '#F4B400'])
+    .setDimensions(width, height)
+    .setLegendPosition(Charts.Position.NONE)
+    .setOption('isStacked', true)
+    .setOption('chartArea', { left: '30%', top: '2%', width: '66%', height: '86%' })
+    .setOption('hAxis', { textStyle: { fontSize: valueFont }, minValue: 0, gridlines: { count: 3 } })
+    .setOption('vAxis', { textStyle: { fontSize: labelFont } })
+    .build();
+  return chart.getAs('image/png');
+}
+
 /** KPI + daily line: replace the screenshot under the title with a drawn line chart, tagged for the next run. */
-function applyGoogleChartOp_(op, slide, counts, problems) {
+function applyGoogleChartOp_(op, slide, props, counts, problems) {
   var tag = GCHART_TAG_PREFIX + op.id;
-  var target = locateGoogleTarget_(op, slide, tag);
+  var target = locateGoogleTarget_(op, slide, tag, props);
   if (target.error) { counts.not_found++; problems.push(op.id + ': หน้า ' + slide.number + ' ' + target.error + ' (ไม่แตะรูปเดิม)'); return; }
   var size = chartPixelSize(target.box.width, target.box.height);
   var blob = drawLineChartBlob_(op, size.width, size.height);
@@ -572,8 +680,9 @@ function applyGoogleChartOp_(op, slide, counts, problems) {
 function insertGridTable_(page, box, header, rows, opts) {
   opts = opts || {};
   var hasHeader = !!(header && header.length);
-  var all = (hasHeader ? [header] : []).concat(rows);
-  var geo = tableGeometry_(box, rows, hasHeader ? header : null);
+  var fit = fitTableText_(box, hasHeader ? header : null, rows);
+  var all = (hasHeader ? [header] : []).concat(fit.rows);
+  var geo = tableGeometry_(box, fit.rows, hasHeader ? header : null);
   var table = page.insertTable(geo.rows, geo.cols, box.left, box.top, box.width, box.height);
   for (var c = 0; c < geo.cols; c++) {
     try { table.getColumn(c).setWidth(geo.colWidths[c]); } catch (e) {}
@@ -587,7 +696,7 @@ function insertGridTable_(page, box, header, rows, opts) {
       var style = text.getTextStyle();
       var isHeader = hasHeader && r === 0;
       var bodyIndex = r - (hasHeader ? 1 : 0);
-      style.setFontSize(geo.fontSize).setForegroundColor('#202124');
+      style.setFontSize(fit.fontSize).setForegroundColor('#202124');
       style.setBold(isHeader || (!!opts.boldLast && r === all.length - 1) || (!hasHeader && k === 0));
       if (k > 0 && !(!hasHeader && geo.cols === 2)) {
         try { text.getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.END); } catch (e) {}
@@ -613,16 +722,35 @@ function tagElement_(el, tag, problems, id) {
   catch (e) { problems.push(id + ': ตั้งชื่อ (tag) ให้ตารางไม่ได้ — รอบหน้าจะหาตารางเดิมไม่เจอ (' + e.message + ')'); }
 }
 
-/** Demographics / Campaign: native table at the screenshot's bounds, then the screenshot goes. */
+/** Demographics (bar chart picture) / Campaign (native table) at the screenshot's bounds, then the old element goes. */
 function applyGoogleTableOp_(op, slide, props, force, counts, problems) {
   var tag = GTABLE_TAG_PREFIX + op.id;
-  var target = locateGoogleTarget_(op, slide, tag);
+  var target = locateGoogleTarget_(op, slide, tag, props);
   if (target.error) { counts.not_found++; problems.push(op.id + ': หน้า ' + slide.number + ' ' + target.error + ' (ไม่แตะรูปเดิม)'); return; }
-  var table = insertGridTable_(slide.page, target.box, op.header, op.rows, { heat: op.heat, boldLast: op.boldLastRow });
-  tagElement_(table, tag, problems, op.id);
-  removeBoxes_(target.remove); // inserted first, so a failure above never loses the team's picture
-  counts.filled++;
-  counts.google_tables++;
+  if (op.heat) {
+    var bars = demographicBars_(op);
+    var size = chartPixelSize(target.box.width, target.box.height);
+    var blob = drawBarChartBlob_(bars, size.width, size.height);
+    var existing = target.remove[0];
+    if (existing && existing.el.getPageElementType() === SlidesApp.PageElementType.IMAGE && (existing.title === tag || existing.title.indexOf(tag + ':') === 0)) {
+      var image = existing.el.asImage();
+      image.replace(blob, false);
+      image.setTitle(tag);
+      if (target.remove.length > 1) removeBoxes_(target.remove.slice(1));
+    } else {
+      var inserted = slide.page.insertImage(blob, target.box.left, target.box.top, target.box.width, target.box.height);
+      tagElement_(inserted, tag, problems, op.id);
+      removeBoxes_(target.remove);
+    }
+    counts.filled++;
+    counts.google_charts++;
+  } else {
+    var table = insertGridTable_(slide.page, target.box, op.header, op.rows, { heat: op.heat, boldLast: op.boldLastRow });
+    tagElement_(table, tag, problems, op.id);
+    removeBoxes_(target.remove); // inserted first, so a failure above never loses the team's picture
+    counts.filled++;
+    counts.google_tables++;
+  }
   if (op.caption) applyGoogleCaption_(op, slide, props, force, counts, problems);
 }
 
@@ -649,13 +777,13 @@ function applyGoogleCaption_(op, slide, props, force, counts, problems) {
   }
 }
 
-/** Most clicked ad: left half = the ad picture (or a headline/description table), right half = Status · Conversions · Clicks · CTR. */
-function applyGoogleAdOp_(op, slide, counts, problems) {
+/** Most clicked ad: picture on the left + stat text box on the right, or a single text box for a text ad. */
+function applyGoogleAdOp_(op, slide, props, counts, problems) {
   var tag = GAD_TAG_PREFIX + op.id;
-  var target = locateGoogleTarget_(op, slide, tag);
+  var target = locateGoogleTarget_(op, slide, tag, props);
   if (target.error) { counts.not_found++; problems.push(op.id + ': หน้า ' + slide.number + ' ' + target.error + ' (ไม่แตะรูปเดิม)'); return; }
 
-  // download first: a failed picture must not cost the team's screenshot (the text table is the fallback)
+  // download first: a failed picture must not cost the team's screenshot (the text box is the fallback)
   var blob = null;
   if (op.imageUrl) {
     try {
@@ -669,20 +797,42 @@ function applyGoogleAdOp_(op, slide, counts, problems) {
   }
   if (!blob && !op.text) return;
 
-  var layout = adLayout_(target.box);
   if (blob) {
+    var layout = adLayout_(target.box);
     var added = slide.page.insertImage(blob);
     var fit = fitInside_(layout.left, added.getWidth(), added.getHeight());
     added.setLeft(fit.left).setTop(fit.top).setWidth(fit.width).setHeight(fit.height);
     added.setTitle(tag + ':img');
+    var statLines = adStatLines_(op);
+    var statSize = fitFontSize_(statLines, layout.right);
+    var statsBox = slide.page.insertTextBox(statLines.join('\n'), layout.right.left, layout.right.top, layout.right.width, layout.right.height);
+    statsBox.getText().getTextStyle().setFontSize(statSize).setForegroundColor('#202124');
+    tagElement_(statsBox, tag + ':stats', problems, op.id);
   } else {
-    var textRows = [['Headline', op.text.headline], ['Description', op.text.description || '-']];
-    var textTable = insertGridTable_(slide.page, { left: layout.left.left, top: layout.left.top, width: layout.left.width, height: Math.min(layout.left.height, 70) }, null, textRows, {});
-    tagElement_(textTable, tag + ':text', problems, op.id);
+    var headline = String((op.text && op.text.headline) || '');
+    var description = String((op.text && op.text.description) || '');
+    var statsLine = adStatLines_(op).join('  ·  ');
+    var f = fitFontSize_([headline, description, statsLine], target.box);
+    var headSize = Math.min(16, f + 2);
+    var parts = [];
+    if (headline) parts.push({ text: headline, size: headSize, bold: true, color: '#1A0DAB' });
+    if (description) parts.push({ text: description, size: f, bold: false, color: '#4D5156' });
+    if (statsLine) parts.push({ text: statsLine, size: f, bold: false, color: '#202124' });
+    var fullText = parts.map(function (p) { return p.text; }).join('\n');
+    var textBox = slide.page.insertTextBox(fullText, target.box.left, target.box.top, target.box.width, target.box.height);
+    var textRange = textBox.getText();
+    var pos = 0;
+    for (var pi = 0; pi < parts.length; pi++) {
+      var part = parts[pi];
+      var len = part.text.length;
+      if (len > 0) {
+        var st = textRange.getRange(pos, pos + len).getTextStyle();
+        st.setFontSize(part.size).setBold(part.bold).setForegroundColor(part.color);
+      }
+      pos += len + 1;
+    }
+    tagElement_(textBox, tag + ':text', problems, op.id);
   }
-  var statsHeight = Math.min(layout.right.height, 50);
-  var stats = insertGridTable_(slide.page, { left: layout.right.left, top: layout.right.top, width: layout.right.width, height: statsHeight }, op.header, [op.row], {});
-  tagElement_(stats, tag + ':stats', problems, op.id);
   removeBoxes_(target.remove);
   counts.filled++;
   counts.google_ads++;
@@ -798,15 +948,24 @@ function applyPayloadObject_(payload, force, withCharts, withImages, withGoogle)
       continue;
     }
 
-    var cacheKey = JSON.stringify(op.slide);
-    if (!Object.prototype.hasOwnProperty.call(slideCache, cacheKey)) slideCache[cacheKey] = findSlide_(index, op.slide);
+    var selector = op.slide;
+    if (selector && (op.kind === 'gchart' || op.kind === 'gtable' || op.kind === 'gad')) {
+      var copy = {};
+      for (var sk in selector) {
+        if (Object.prototype.hasOwnProperty.call(selector, sk)) copy[sk] = selector[sk];
+      }
+      copy.topTitle = true;
+      selector = copy;
+    }
+    var cacheKey = JSON.stringify(selector);
+    if (!Object.prototype.hasOwnProperty.call(slideCache, cacheKey)) slideCache[cacheKey] = findSlide_(index, selector);
     var slide = slideCache[cacheKey];
     if (!slide) {
       counts.not_found++;
       problems.push(op.id + ': ไม่พบหน้า');
-      if (op.slide && op.slide.titlePrefix && !debugShown) {
+      if (selector && selector.titlePrefix && !debugShown) {
         debugShown = true;
-        problems.push('  debug (' + op.id + '): ' + (debugTitle_(op.slide).join(' ; ') || 'ไม่พบกล่องที่มีคำว่า Campaign + ชื่อสาขานี้เลย'));
+        problems.push('  debug (' + op.id + '): ' + (debugTitle_(selector).join(' ; ') || 'ไม่พบกล่องที่มีคำว่า Campaign + ชื่อสาขานี้เลย'));
       }
       continue;
     }
@@ -819,7 +978,7 @@ function applyPayloadObject_(payload, force, withCharts, withImages, withGoogle)
     }
 
     if (op.kind === 'gchart') {
-      try { applyGoogleChartOp_(op, slide, counts, problems); }
+      try { applyGoogleChartOp_(op, slide, props, counts, problems); }
       catch (e) { counts.not_found++; problems.push(op.id + ': วาดกราฟ Google Ads ไม่สำเร็จ — ' + e.message); }
       continue;
     }
@@ -831,7 +990,7 @@ function applyPayloadObject_(payload, force, withCharts, withImages, withGoogle)
     }
 
     if (op.kind === 'gad') {
-      try { applyGoogleAdOp_(op, slide, counts, problems); }
+      try { applyGoogleAdOp_(op, slide, props, counts, problems); }
       catch (e) { counts.not_found++; problems.push(op.id + ': ใส่โฆษณา Google Ads ไม่สำเร็จ — ' + e.message); }
       continue;
     }
@@ -909,7 +1068,7 @@ function applyPayloadObject_(payload, force, withCharts, withImages, withGoogle)
     generated_at: payload.generated_at + ' · สคริปต์ ' + SCRIPT_VERSION,
     period: payload.period,
     counts: counts,
-    problems: problems.slice(0, 40),
+    problems: orderProblems_(problems, 60),
     needs_review: payload.needs_review || [],
   };
 }

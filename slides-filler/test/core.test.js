@@ -599,3 +599,173 @@ test('tag prefixes are distinct from the older chart / creative tags', () => {
   const old = core.pickChartImage_({ left: 40, top: 100, width: 100, height: 20 }, [img(40, 130, 400, 200, 'spark:gchart:google.search.chart')], 'spark:chart:x');
   assert.strictEqual(old === null || old.title !== 'spark:gchart:google.search.chart', true);
 });
+
+test('visibleShare_: inside, half-off left, outside, and zero-size point boxes', () => {
+  const page = { width: 960, height: 540 };
+  assert.strictEqual(core.visibleShare_({ left: 10, top: 20, width: 100, height: 50 }, page), 1);
+  assert.strictEqual(core.visibleShare_({ left: -50, top: 20, width: 100, height: 50 }, page), 0.5);
+  assert.strictEqual(core.visibleShare_({ left: -200, top: 20, width: 100, height: 50 }, page), 0);
+  assert.strictEqual(core.visibleShare_({ left: 1000, top: 20, width: 100, height: 50 }, page), 0);
+  assert.strictEqual(core.visibleShare_({ left: 100, top: 100, width: 0, height: 0 }, page), 1);
+  assert.strictEqual(core.visibleShare_({ left: -10, top: 100, width: 0, height: 50 }, page), 0);
+  assert.strictEqual(core.visibleShare_({ left: 960, top: 100, width: 0, height: 0 }, page), 0);
+});
+
+test('pickTopLeftPicture_: skips off-slide parked pictures and off-slide tagged pictures', () => {
+  const page = { width: 960, height: 540 };
+  const parked = img(-400, 80, 450, 220); // mostly off the left edge (50/450 < 0.5)
+  const onPage = img(30, 90, 500, 200);
+  assert.strictEqual(core.pickTopLeftPicture_([parked, onPage], page, 'spark:gchart:x'), onPage);
+  const offTagged = img(-500, 80, 500, 200, 'spark:gchart:x');
+  assert.strictEqual(core.pickTopLeftPicture_([offTagged, onPage], page, 'spark:gchart:x'), onPage);
+  assert.strictEqual(core.pickTopLeftPicture_([offTagged], page, 'spark:gchart:x'), null);
+});
+
+test('pickScreenshotBelow_ with page: skips off-page pictures under the label', () => {
+  const page = { width: 960, height: 540 };
+  const label = { left: 40, top: 200, width: 120, height: 20 };
+  const offPage = img(40, 225, 300, 150);
+  offPage.left = -200; // 100/300 = 0.33 < 0.5 visible
+  const onPage = img(40, 260, 300, 150);
+  assert.strictEqual(core.pickScreenshotBelow_(label, [offPage, onPage], page), onPage);
+  assert.strictEqual(core.pickScreenshotBelow_(label, [offPage], page), null);
+});
+
+test('anchorMatchesText_: first non-empty line matches label, Search Campaign does not match Campaign', () => {
+  assert.ok(core.anchorMatchesText_('Campaign\u000b(เรียงลำดับจาก Conversion)', { label: 'Campaign' }));
+  assert.ok(core.anchorMatchesText_('\n  Campaign  \n(เรียงลำดับจาก Conversion)', { label: 'Campaign' }));
+  assert.ok(!core.anchorMatchesText_('Search Campaign', { label: 'Campaign' }));
+  assert.ok(!core.anchorMatchesText_('Search Campaign\nCampaign', { label: 'Campaign' }));
+  assert.ok(core.anchorMatchesText_('  Demographics  ', { label: 'demographics' }));
+});
+
+test('topTextIndex_: picks highest non-empty text, tie within 3pt prefers smaller left, all empty returns -1', () => {
+  assert.strictEqual(
+    core.topTextIndex_(
+      ['   ', 'Right title', 'Left title', 'Body'],
+      [{ top: 5, left: 5 }, { top: 20, left: 300 }, { top: 22, left: 40 }, { top: 100, left: 20 }]
+    ),
+    2
+  );
+  assert.strictEqual(
+    core.topTextIndex_(
+      ['Higher', 'Lower'],
+      [{ top: 20, left: 300 }, { top: 23, left: 40 }]
+    ),
+    0
+  );
+  assert.strictEqual(core.topTextIndex_(['', '  \n\t  '], [{ top: 10, left: 10 }, { top: 20, left: 20 }]), -1);
+  assert.strictEqual(core.topTextIndex_([], []), -1);
+});
+
+test('demographicBars_: builds title, short labels with percentage, groups, and parsed numeric values', () => {
+  const bars = core.demographicBars_({
+    header: ['กลุ่ม', 'Conversions', 'สัดส่วน'],
+    rows: [
+      ['อายุ 25-34', '9,867', '26%'],
+      ['อายุ 35-44', '฿ 1,234.5', '12%'],
+      ['ไม่ทราบ', '-', '0%'],
+    ],
+  });
+  assert.deepStrictEqual(bars, {
+    title: 'Conversions',
+    labels: ['25-34 · 26%', '35-44 · 12%', 'ไม่ทราบ · 0%'],
+    values: [9867, 1234.5, 0],
+    groups: ['age', 'age', 'age'],
+  });
+});
+
+test('demographicBars_: age/gender prefix rules, ไม่ระบุ preserved, and missing share omitted', () => {
+  const bars = core.demographicBars_({
+    header: ['กลุ่ม', 'Clicks', 'สัดส่วน'],
+    rows: [
+      ['อายุ 25-34', '340', '34%'],
+      ['เพศ ชาย', '550', '55%'],
+      ['อายุ ไม่ระบุ', '80', '8%'],
+      ['เพศ ไม่ระบุ', '80', '8%'],
+      ['อายุ 18-24', '20', ''],
+    ],
+  });
+  assert.deepStrictEqual(bars.labels, [
+    '25-34 · 34%',
+    'ชาย · 55%',
+    'อายุ ไม่ระบุ · 8%',
+    'เพศ ไม่ระบุ · 8%',
+    '18-24',
+  ]);
+  assert.deepStrictEqual(bars.groups, ['age', 'gender', 'age', 'gender', 'age']);
+});
+
+test('barLabelFontPx_: scales by height and row count, clamped to 9..16', () => {
+  assert.strictEqual(core.barLabelFontPx_(150, 10), 10);
+  assert.strictEqual(core.barLabelFontPx_(40, 10), 9);
+  assert.strictEqual(core.barLabelFontPx_(800, 4), 16);
+});
+
+test('visualLength_: drops Thai combining marks and keeps Latin unchanged', () => {
+  assert.strictEqual(core.visualLength_('เมทัลชีท'), 6);
+  assert.strictEqual(core.visualLength_('Search-Tier 1&2'), 15);
+  assert.strictEqual(core.visualLength_(''), 0);
+});
+
+test('fitTableText_: fits roomy box at 11, shrinks for short box, truncates first column at 7 for impossible box', () => {
+  const header = ['Campaign', 'Conv.', 'Cost'];
+  const shortRows = [['Search', '100', '฿500'], ['Total', '100', '฿500']];
+  const roomy = core.fitTableText_({ left: 0, top: 0, width: 450, height: 200 }, header, shortRows);
+  assert.strictEqual(roomy.fontSize, 11);
+  assert.deepStrictEqual(roomy.rows, shortRows);
+
+  const mediumRows = [['GMB Tier 1 (ชลบุรี, นครปฐม, ระยอง, สมุทรปราการ)', '120', '฿660'], ['Total', '120', '฿660']];
+  const smaller = core.fitTableText_({ left: 0, top: 0, width: 300, height: 75 }, header, mediumRows);
+  assert.strictEqual(smaller.fontSize, 8);
+  assert.deepStrictEqual(smaller.rows, mediumRows);
+
+  const longName = 'GMB แสงไทย Tier2 (นครราชสีมา, เชียงใหม่ - ลำพูน, ขอนแก่น,อุดรธานี, สุรินทร์))';
+  const origRows = [[longName, '120', '฿660'], ['Total', '120', '฿660']];
+  const impossible = core.fitTableText_({ left: 0, top: 0, width: 240, height: 30 }, header, origRows);
+  assert.strictEqual(impossible.fontSize, 7);
+  assert.ok(impossible.rows[0][0].endsWith('…'));
+  assert.ok(core.visualLength_(impossible.rows[0][0]) <= 36);
+  assert.strictEqual(impossible.rows[0][1], '120');
+  assert.strictEqual(impossible.rows[0][2], '฿660');
+  assert.deepStrictEqual(impossible.rows[1], ['Total', '120', '฿660']);
+  assert.deepStrictEqual(header, ['Campaign', 'Conv.', 'Cost']);
+  assert.strictEqual(origRows[0][0], longName);
+});
+
+test('fitFontSize_: picks largest fitting integer 14..7, falls back to 7', () => {
+  assert.strictEqual(core.fitFontSize_(['Status: Enabled'], { width: 300, height: 100 }), 14);
+  const medium = core.fitFontSize_(['Headline that wraps a couple times', 'Description text here', 'Clicks: 100'], { width: 120, height: 55 });
+  assert.ok(medium >= 7 && medium < 14);
+  assert.strictEqual(core.fitFontSize_([ 'A'.repeat(400), 'B'.repeat(400) ], { width: 60, height: 20 }), 7);
+});
+
+test('adStatLines_: formats header and row columns as "Header: value"', () => {
+  assert.deepStrictEqual(
+    core.adStatLines_({
+      header: ['Status', 'Conversions', 'Clicks', 'CTR'],
+      row: ['Enabled', '24', '239', '6.29%'],
+    }),
+    ['Status: Enabled', 'Conversions: 24', 'Clicks: 239', 'CTR: 6.29%']
+  );
+});
+
+test('orderProblems_: real problems first, skips moved to end and collapsed after 8, limit respected', () => {
+  const skips = Array.from({ length: 11 }, (_, i) => `op${i}: ทีมแก้ไว้แล้ว (ข้าม)`);
+  const input = [skips[0], 'err1: ไม่พบหน้า', skips[1], skips[2], 'err2: โหลดรูปไม่ได้', ...skips.slice(3)];
+  const ordered = core.orderProblems_(input, 60);
+  assert.strictEqual(ordered[0], 'err1: ไม่พบหน้า');
+  assert.strictEqual(ordered[1], 'err2: โหลดรูปไม่ได้');
+  assert.strictEqual(ordered.length, 2 + 8 + 1);
+  assert.strictEqual(ordered[9], skips[7]);
+  assert.strictEqual(ordered[10], '…และข้ามจุดที่ทีมแก้ไว้อีก 3 จุด (ติ๊ก "ทับกล่องที่ทีมแก้ไว้ด้วย" ถ้าต้องการให้ทับ)');
+  assert.strictEqual(core.orderProblems_(input, 5).length, 5);
+});
+
+test('pickCreativeImage_: a landscape picture (about 2:1) above the rank box is picked; a wide strip is not', () => {
+  const box = { left: 100, top: 300, width: 130, height: 80 };
+  const landscape = { title: '', left: 100, top: 234, width: 130, height: 66 };
+  assert.strictEqual(core.pickCreativeImage_(box, [landscape], 'spark:creative:x'), landscape);
+  const strip = { title: '', left: 100, top: 270, width: 130, height: 30 };
+  assert.strictEqual(core.pickCreativeImage_(box, [strip], 'spark:creative:x'), null);
+});
